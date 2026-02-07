@@ -85,7 +85,7 @@ export default function PosingCoach() {
     if (speechSynthesis) speechSynthesis.getVoices();
   }, []);
 
-  // Improved pose analysis with scoring and tilt info
+  // FIXED: More accurate and forgiving pose analysis
   const analyzePoseLocally = (landmarks: any[]) => {
     const nose = landmarks[0];
     const leftShoulder = landmarks[11];
@@ -112,29 +112,30 @@ export default function PosingCoach() {
       y: (leftHip.y + rightHip.y) / 2
     };
     
-    // 1. SHOULDER TILT
-    const shoulderAngle = Math.atan2(
-      rightShoulder.y - leftShoulder.y,
-      rightShoulder.x - leftShoulder.x
-    ) * 180 / Math.PI;
+    // 1. SHOULDER TILT (FIXED: Better calculation)
+    // Use actual Y difference normalized by shoulder width for camera angle independence
+    const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+    const shoulderHeightDiff = Math.abs(leftShoulder.y - rightShoulder.y);
+    const shoulderTiltRatio = shoulderHeightDiff / shoulderWidth;
     
-    const shoulderTilt = Math.abs(shoulderAngle);
+    // Convert to degrees for display (approximate)
+    const shoulderTiltDegrees = Math.atan(shoulderTiltRatio) * 180 / Math.PI;
     
-    if (shoulderTilt > 8) {
-      score -= 25;
+    if (shoulderTiltRatio > 0.15) { // Very tilted (>8.5°)
+      score -= 20;
       const higherSide = leftShoulder.y < rightShoulder.y ? "left" : "right";
-      feedback.push(`⚠️ Shoulders tilted ${shoulderTilt.toFixed(1)}° (${higherSide} higher)`);
-      description += `- Shoulders uneven (${shoulderTilt.toFixed(1)}° tilt, ${higherSide} higher)\n`;
-    } else if (shoulderTilt > 4) {
-      score -= 10;
-      feedback.push(`💡 Slight shoulder tilt (${shoulderTilt.toFixed(1)}°)`);
-      description += `- Slight shoulder tilt (${shoulderTilt.toFixed(1)}°)\n`;
+      feedback.push(`⚠️ Shoulders tilted ${shoulderTiltDegrees.toFixed(1)}° (${higherSide} higher)`);
+      description += `- Shoulders uneven (${shoulderTiltDegrees.toFixed(1)}° tilt, ${higherSide} higher)\n`;
+    } else if (shoulderTiltRatio > 0.08) { // Slightly tilted (>4.5°)
+      score -= 8;
+      feedback.push(`💡 Slight shoulder tilt (${shoulderTiltDegrees.toFixed(1)}°)`);
+      description += `- Slight shoulder tilt (${shoulderTiltDegrees.toFixed(1)}°)\n`;
     } else {
-      feedback.push(`✓ Shoulders level (${shoulderTilt.toFixed(1)}°)`);
-      description += `- Shoulders level (${shoulderTilt.toFixed(1)}° - excellent)\n`;
+      feedback.push(`✓ Shoulders level (${shoulderTiltDegrees.toFixed(1)}°)`);
+      description += `- Shoulders level (${shoulderTiltDegrees.toFixed(1)}° - excellent)\n`;
     }
     
-    // 2. SPINE ALIGNMENT
+    // 2. SPINE ALIGNMENT (FIXED: More forgiving)
     const spineAngle = Math.atan2(
       hipCenter.y - shoulderCenter.y,
       hipCenter.x - shoulderCenter.x
@@ -142,12 +143,12 @@ export default function PosingCoach() {
     
     const spineDeviation = Math.abs(90 - Math.abs(spineAngle));
     
-    if (spineDeviation > 15) {
-      score -= 30;
+    if (spineDeviation > 20) { // Very bad posture
+      score -= 25;
       feedback.push(`⚠️ Back leaning ${spineDeviation.toFixed(1)}°`);
       description += `- Slouching detected (${spineDeviation.toFixed(1)}° lean)\n`;
-    } else if (spineDeviation > 8) {
-      score -= 15;
+    } else if (spineDeviation > 12) { // Noticeable lean
+      score -= 12;
       feedback.push(`💡 Stand more upright (${spineDeviation.toFixed(1)}° lean)`);
       description += `- Slight forward lean (${spineDeviation.toFixed(1)}°)\n`;
     } else {
@@ -155,16 +156,16 @@ export default function PosingCoach() {
       description += `- Posture is straight (${spineDeviation.toFixed(1)}° deviation - good)\n`;
     }
     
-    // 3. HEAD POSITION
+    // 3. HEAD POSITION (More forgiving)
     const headOffsetX = Math.abs(nose.x - shoulderCenter.x);
     
-    if (headOffsetX > 0.12) {
-      score -= 20;
+    if (headOffsetX > 0.15) { // Very off-center
+      score -= 15;
       const direction = nose.x > shoulderCenter.x ? "right" : "left";
       feedback.push(`⚠️ Head leaning ${direction}`);
       description += `- Head off-center (${(headOffsetX * 100).toFixed(1)}% offset to ${direction})\n`;
-    } else if (headOffsetX > 0.07) {
-      score -= 10;
+    } else if (headOffsetX > 0.09) { // Slightly off
+      score -= 7;
       feedback.push(`💡 Center head slightly`);
       description += `- Head slightly off-center\n`;
     } else {
@@ -172,15 +173,15 @@ export default function PosingCoach() {
       description += `- Head centered (good)\n`;
     }
     
-    // 4. CHIN HEIGHT
+    // 4. CHIN HEIGHT (More forgiving)
     const chinHeight = shoulderCenter.y - nose.y;
     
-    if (chinHeight < 0.12) {
-      score -= 15;
+    if (chinHeight < 0.10) { // Very low
+      score -= 12;
       feedback.push(`💡 Lift chin up`);
       description += `- Chin lowered (could lift)\n`;
-    } else if (chinHeight > 0.25) {
-      score -= 10;
+    } else if (chinHeight > 0.30) { // Very high
+      score -= 8;
       feedback.push(`💡 Lower chin slightly`);
       description += `- Chin too high\n`;
     } else {
