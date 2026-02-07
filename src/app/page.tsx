@@ -11,6 +11,14 @@ export default function PosingCoach() {
   const [status, setStatus] = useState("Initializing...");
   const [debugInfo, setDebugInfo] = useState("Waiting for first frame...");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
+  
+  // NEW: Consecutive frame validation to reduce false positives
+  const [consecutiveHumanFrames, setConsecutiveHumanFrames] = useState(0);
+  const [lastObjectDetected, setLastObjectDetected] = useState<string | null>(null);
+  
+  // NEW: Test mode to see what the AI sees
+  const [testMode, setTestMode] = useState(false);
+  const [testImage, setTestImage] = useState<string | null>(null);
 
   const startCamera = useCallback(async () => {
     try {
@@ -43,6 +51,7 @@ export default function PosingCoach() {
     const interval = setInterval(async () => {
       if (videoRef.current && videoRef.current.readyState >= 2) {
         try {
+          console.time('⏱️ Analysis Time'); // Performance tracking
           setStatus("Analyzing...");
           
           const canvas = canvasRef.current!;
@@ -52,25 +61,61 @@ export default function PosingCoach() {
           context?.drawImage(videoRef.current, 0, 0, 640, 480);
           
           const imageData = canvas.toDataURL('image/jpeg', 0.3);
+          
+          // Store test image if test mode is enabled
+          if (testMode) {
+            setTestImage(imageData);
+          }
+          
           const aiResponse = await analyzeFrame(imageData);
+          console.timeEnd('⏱️ Analysis Time');
           
           console.log("📸 AI Response:", aiResponse);
           setDebugInfo(aiResponse);
           
           if (aiResponse.startsWith("HUMAN:")) {
             const tip = aiResponse.replace("HUMAN:", "").trim();
-            setStatus("Human Detected!");
-            setAdvice(tip);
-            setShowToast(true);
-            setTimeout(() => {
-              setShowToast(false);
-              setStatus("Ready for Pose...");
-            }, 5000);
+            
+            // Require 2 consecutive human detections before showing advice
+            setConsecutiveHumanFrames(prev => prev + 1);
+            
+            if (consecutiveHumanFrames >= 1) {
+              setStatus("Human Detected!");
+              setAdvice(tip);
+              setShowToast(true);
+              setTimeout(() => {
+                setShowToast(false);
+                setStatus("Ready for Pose...");
+              }, 5000);
+            } else {
+              setStatus("Confirming human...");
+            }
+            
+            setLastObjectDetected(null);
+            
           } else if (aiResponse.startsWith("OBJECT:")) {
             const objectName = aiResponse.replace("OBJECT:", "").trim();
-            setStatus(`Detected: ${objectName}`);
+            
+            // Reset human counter
+            setConsecutiveHumanFrames(0);
+            
+            // Avoid spamming status if it's the same object
+            if (lastObjectDetected !== objectName) {
+              setStatus(`Detected: ${objectName}`);
+              setLastObjectDetected(objectName);
+            }
+            
             setShowToast(false);
+            
+          } else if (aiResponse.startsWith("EMPTY")) {
+            setConsecutiveHumanFrames(0);
+            setStatus("Ready for Pose...");
+            setShowToast(false);
+            setLastObjectDetected(null);
+            
           } else {
+            // Fallback for unexpected responses
+            setConsecutiveHumanFrames(0);
             setStatus("Ready for Pose...");
             setShowToast(false);
           }
@@ -78,12 +123,13 @@ export default function PosingCoach() {
           console.error("Loop Error:", err);
           setStatus("AI Error");
           setDebugInfo("Error: " + (err as Error).message);
+          setConsecutiveHumanFrames(0);
         }
       }
-    }, 4000);
+    }, 4000); // Keep at 4s for now - reduce to 3000 or 2500 after testing
 
     return () => clearInterval(interval);
-  }, [startCamera]);
+  }, [startCamera, consecutiveHumanFrames, lastObjectDetected, testMode]);
 
   return (
     <main style={{ 
@@ -117,6 +163,27 @@ export default function PosingCoach() {
           }} />
           <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
         </div>
+
+        {/* TEST MODE TOGGLE (Top Left) */}
+        <button 
+          onClick={() => setTestMode(!testMode)}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 15,
+            background: testMode ? '#0070f3' : 'rgba(255,255,255,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            color: '#fff',
+            padding: '6px 12px',
+            borderRadius: '8px',
+            fontSize: '0.65rem',
+            cursor: 'pointer',
+            zIndex: 50,
+            fontWeight: 'bold'
+          }}
+        >
+          {testMode ? '👁️ TEST ON' : '👁️ TEST'}
+        </button>
 
         {/* COACHING NOTIFICATION */}
         {showToast && advice && (
@@ -162,6 +229,37 @@ export default function PosingCoach() {
         />
         <canvas ref={canvasRef} style={{ display: 'none' }} />
         
+        {/* TEST MODE: Show what AI sees */}
+        {testMode && testImage && (
+          <div style={{
+            position: 'absolute',
+            top: 10,
+            left: 10,
+            width: '120px',
+            height: '90px',
+            border: '2px solid #0070f3',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            zIndex: 20
+          }}>
+            <img src={testImage} alt="AI View" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <p style={{ 
+              position: 'absolute', 
+              bottom: 0, 
+              left: 0, 
+              right: 0, 
+              margin: 0, 
+              background: 'rgba(0,112,243,0.9)', 
+              color: '#fff', 
+              fontSize: '0.5rem', 
+              textAlign: 'center', 
+              padding: '2px',
+              fontWeight: 'bold'
+            }}>AI VIEW</p>
+          </div>
+        )}
+        
         {/* FLIP BUTTON */}
         <button 
           onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
@@ -203,7 +301,7 @@ export default function PosingCoach() {
         borderRadius: '20px',
         border: '1px solid rgba(255,255,255,0.1)',
         backdropFilter: 'blur(10px)',
-        height: '80px', // Fixed height
+        height: '80px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
@@ -216,7 +314,7 @@ export default function PosingCoach() {
           fontWeight: 'bold',
           letterSpacing: '1px'
         }}>
-          🤖 AI VISION DEBUG
+          🤖 AI VISION DEBUG {consecutiveHumanFrames > 0 && `(${consecutiveHumanFrames}/2)`}
         </p>
         <p style={{ 
           margin: '8px 0 0', 
@@ -234,7 +332,7 @@ export default function PosingCoach() {
         </p>
       </div>
 
-      {/* BRANDING (optional - remove if too crowded) */}
+      {/* BRANDING */}
       <p style={{ 
         color: '#333', 
         fontSize: '0.6rem', 
