@@ -10,15 +10,17 @@ export default function PosingCoach() {
   const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [status, setStatus] = useState("Loading AI...");
-  const [currentAdvice, setCurrentAdvice] = useState<string>("Step into the frame and let me see your pose");
+  const [currentAdvice, setCurrentAdvice] = useState<string>("Press the button for AI coaching");
+  const [localFeedback, setLocalFeedback] = useState<string[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isGettingAdvice, setIsGettingAdvice] = useState(false);
   
   const animationFrameRef = useRef<number | undefined>(undefined);
-  const lastAiCallTime = useRef<number>(0);
+  const currentPoseData = useRef<string>("");
   const speechSynthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
 
-  // Speak advice with natural voice
+  // Speak advice
   const speakAdvice = (text: string) => {
     if (!voiceEnabled || !speechSynthesis) return;
     
@@ -32,15 +34,10 @@ export default function PosingCoach() {
     const voices = speechSynthesis.getVoices();
     const naturalVoice = voices.find(voice => 
       voice.lang.startsWith('en') && 
-      (voice.name.includes('Google') || 
-       voice.name.includes('Natural') || 
-       voice.name.includes('Enhanced') ||
-       voice.name.includes('Samantha'))
+      (voice.name.includes('Google') || voice.name.includes('Natural'))
     );
     
-    if (naturalVoice) {
-      utterance.voice = naturalVoice;
-    }
+    if (naturalVoice) utterance.voice = naturalVoice;
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
@@ -52,7 +49,6 @@ export default function PosingCoach() {
   useEffect(() => {
     const initializePoseLandmarker = async () => {
       try {
-        console.log("🔄 Initializing pose detection...");
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
@@ -68,76 +64,81 @@ export default function PosingCoach() {
         
         setPoseLandmarker(landmarker);
         setStatus("Ready");
-        console.log("✅ Voice coach ready!");
+        console.log("✅ Ready!");
       } catch (err) {
         console.error("❌ Error:", err);
-        setStatus("Failed to load");
+        setStatus("Failed");
       }
     };
     
     initializePoseLandmarker();
-    
-    if (speechSynthesis) {
-      speechSynthesis.getVoices();
-    }
+    if (speechSynthesis) speechSynthesis.getVoices();
   }, []);
 
-  // Analyze pose and describe it for AI
-  const analyzePoseForAI = (landmarks: any[]) => {
+  // Analyze pose and provide local feedback
+  const analyzePoseLocally = (landmarks: any[]) => {
     const nose = landmarks[0];
     const leftShoulder = landmarks[11];
     const rightShoulder = landmarks[12];
-    const leftElbow = landmarks[13];
-    const rightElbow = landmarks[14];
     const leftHip = landmarks[23];
     const rightHip = landmarks[24];
     
     if (!nose || !leftShoulder || !rightShoulder || !leftHip || !rightHip) {
-      return null;
+      return { feedback: [], description: "" };
     }
     
-    // Calculate pose metrics
-    const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
-    const shoulderMidpoint = (leftShoulder.y + rightShoulder.y) / 2;
-    const hipMidpoint = (leftHip.y + rightHip.y) / 2;
-    const headOffset = Math.abs(nose.x - ((leftShoulder.x + rightShoulder.x) / 2));
-    const posture = shoulderMidpoint - hipMidpoint;
-    
-    // Build natural language description
+    const feedback: string[] = [];
     let description = "CURRENT POSE:\n";
     
     // Shoulder alignment
+    const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
     if (shoulderDiff > 0.05) {
       const higherSide = leftShoulder.y < rightShoulder.y ? "left" : "right";
-      description += `- Shoulders are uneven (${higherSide} shoulder is higher by ${(shoulderDiff * 100).toFixed(1)}%)\n`;
+      feedback.push(`⚠️ ${higherSide.charAt(0).toUpperCase() + higherSide.slice(1)} shoulder higher`);
+      description += `- Shoulders uneven (${higherSide} is higher by ${(shoulderDiff * 100).toFixed(1)}%)\n`;
     } else {
-      description += `- Shoulders are level (good alignment)\n`;
+      feedback.push(`✓ Shoulders level`);
+      description += `- Shoulders are level (good)\n`;
     }
     
     // Posture
+    const shoulderMidpoint = (leftShoulder.y + rightShoulder.y) / 2;
+    const hipMidpoint = (leftHip.y + rightHip.y) / 2;
+    const posture = shoulderMidpoint - hipMidpoint;
+    
     if (posture < -0.15) {
-      description += `- Slouching detected (back is curved forward)\n`;
+      feedback.push(`⚠️ Straighten back`);
+      description += `- Slouching (back curved forward)\n`;
     } else if (posture < -0.05) {
-      description += `- Slight forward lean in posture\n`;
+      feedback.push(`⚠️ Slight forward lean`);
+      description += `- Slight forward lean\n`;
     } else {
-      description += `- Posture is straight (excellent)\n`;
+      feedback.push(`✓ Good posture`);
+      description += `- Posture is straight\n`;
     }
     
     // Head position
+    const shoulderXMid = (leftShoulder.x + rightShoulder.x) / 2;
+    const headOffset = Math.abs(nose.x - shoulderXMid);
+    
     if (headOffset > 0.1) {
-      description += `- Head is off-center (not aligned with shoulders)\n`;
+      feedback.push(`⚠️ Center head`);
+      description += `- Head off-center\n`;
     } else {
-      description += `- Head is centered (good)\n`;
+      feedback.push(`✓ Head centered`);
+      description += `- Head centered\n`;
     }
     
     // Chin height
     if (nose.y > shoulderMidpoint - 0.15) {
-      description += `- Chin is lowered (could be lifted)\n`;
+      feedback.push(`💡 Lift chin`);
+      description += `- Chin lowered (could lift)\n`;
     } else {
-      description += `- Chin height is good\n`;
+      feedback.push(`✓ Good chin height`);
+      description += `- Chin height good\n`;
     }
     
-    return description;
+    return { feedback, description };
   };
 
   // Pose detection loop
@@ -159,7 +160,6 @@ export default function PosingCoach() {
         if (results.landmarks && results.landmarks[0]) {
           const drawingUtils = new DrawingUtils(ctx);
           
-          // Draw pose skeleton
           drawingUtils.drawLandmarks(results.landmarks[0], {
             radius: 5,
             color: '#00ff88',
@@ -172,20 +172,14 @@ export default function PosingCoach() {
             { color: '#00ff88', lineWidth: 3 }
           );
           
-          // Get AI coaching every 12 seconds (5 calls/min = free tier limit)
-          const now = Date.now();
-          if (now - lastAiCallTime.current > 12000) {
-            const poseDescription = analyzePoseForAI(results.landmarks[0]);
-            if (poseDescription) {
-              getAiCoaching(poseDescription);
-              lastAiCallTime.current = now;
-            }
-          }
+          // Get local feedback
+          const { feedback, description } = analyzePoseLocally(results.landmarks[0]);
+          setLocalFeedback(feedback);
+          currentPoseData.current = description; // Store for AI button
+          
         } else {
-          // No person detected
-          if (Date.now() - lastAiCallTime.current > 8000) {
-            setCurrentAdvice("Step into the frame so I can see you");
-          }
+          setLocalFeedback(["No person detected"]);
+          currentPoseData.current = "";
         }
       }
     }
@@ -193,20 +187,30 @@ export default function PosingCoach() {
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // Get AI coaching based on pose data
-  const getAiCoaching = async (poseDescription: string) => {
+  // Get AI coaching (manual button press)
+  const getAiCoaching = async () => {
+    if (!currentPoseData.current) {
+      setCurrentAdvice("I can't see you - step into the frame first");
+      speakAdvice("I can't see you - step into the frame first");
+      return;
+    }
+    
+    setIsGettingAdvice(true);
+    setCurrentAdvice("Analyzing your pose...");
+    
     try {
-      console.log("📊 Pose Analysis:\n", poseDescription);
-      console.log("🎙️ Getting AI coaching...");
+      console.log("📊 Sending pose data:\n", currentPoseData.current);
+      const advice = await analyzePoseData(currentPoseData.current);
       
-      const advice = await analyzePoseData(poseDescription);
-      
-      console.log("💬 Coach says:", advice);
+      console.log("💬 AI Coach:", advice);
       setCurrentAdvice(advice);
       speakAdvice(advice);
       
     } catch (err) {
-      console.error("Coaching error:", err);
+      console.error("Error:", err);
+      setCurrentAdvice("Oops, something went wrong. Try again in a moment");
+    } finally {
+      setIsGettingAdvice(false);
     }
   };
 
@@ -241,9 +245,7 @@ export default function PosingCoach() {
       if (animationFrameRef.current !== undefined) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      if (speechSynthesis) {
-        speechSynthesis.cancel();
-      }
+      if (speechSynthesis) speechSynthesis.cancel();
     };
   }, [facingMode, poseLandmarker]);
 
@@ -255,10 +257,11 @@ export default function PosingCoach() {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '20px'
+      padding: '20px',
+      gap: '20px'
     }}>
       
-      {/* Status Bar */}
+      {/* Status */}
       <div style={{
         position: 'fixed',
         top: 15,
@@ -274,18 +277,15 @@ export default function PosingCoach() {
         alignItems: 'center',
         gap: '8px'
       }}>
-        {isSpeaking && <span style={{ fontSize: '16px', animation: 'pulse 1s infinite' }}>🔊</span>}
+        {isSpeaking && <span style={{ fontSize: '16px' }}>🔊</span>}
         {status}
       </div>
       
       {/* Voice Toggle */}
       <button
         onClick={() => {
-          const newState = !voiceEnabled;
-          setVoiceEnabled(newState);
-          if (!newState && speechSynthesis) {
-            speechSynthesis.cancel();
-          }
+          setVoiceEnabled(!voiceEnabled);
+          if (voiceEnabled && speechSynthesis) speechSynthesis.cancel();
         }}
         style={{
           position: 'fixed',
@@ -364,11 +364,67 @@ export default function PosingCoach() {
         >
           🔄
         </button>
+        
+        {/* AI Coach Button */}
+        <button
+          onClick={getAiCoaching}
+          disabled={isGettingAdvice}
+          style={{
+            position: 'absolute',
+            bottom: 15,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: isGettingAdvice ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: '#fff',
+            border: 'none',
+            padding: '14px 30px',
+            borderRadius: '25px',
+            fontSize: '0.9rem',
+            fontWeight: 'bold',
+            cursor: isGettingAdvice ? 'not-allowed' : 'pointer',
+            boxShadow: '0 4px 15px rgba(102,126,234,0.4)',
+            zIndex: 10,
+            opacity: isGettingAdvice ? 0.6 : 1
+          }}
+        >
+          {isGettingAdvice ? '⏳ Analyzing...' : '🎙️ Get AI Advice'}
+        </button>
       </div>
       
-      {/* Live Coaching Display */}
+      {/* Real-time Local Feedback */}
       <div style={{
-        marginTop: '20px',
+        width: '85%',
+        maxWidth: '500px',
+        background: 'rgba(20,20,20,0.9)',
+        padding: '15px 20px',
+        borderRadius: '20px',
+        border: '1px solid rgba(255,255,255,0.1)',
+        backdropFilter: 'blur(10px)'
+      }}>
+        <p style={{
+          margin: 0,
+          fontSize: '0.65rem',
+          color: '#888',
+          fontWeight: 'bold',
+          letterSpacing: '1px',
+          marginBottom: '10px'
+        }}>
+          📊 REAL-TIME FEEDBACK
+        </p>
+        {localFeedback.map((feedback, i) => (
+          <p key={i} style={{
+            margin: '5px 0',
+            fontSize: '0.85rem',
+            color: feedback.includes('✓') ? '#0f0' : '#fff',
+            lineHeight: '1.4'
+          }}>
+            {feedback}
+          </p>
+        ))}
+      </div>
+      
+      {/* AI Coaching Display */}
+      <div style={{
         width: '85%',
         maxWidth: '500px',
         background: 'rgba(20,20,20,0.95)',
@@ -403,10 +459,9 @@ export default function PosingCoach() {
       <p style={{
         color: '#333',
         fontSize: '0.6rem',
-        letterSpacing: '2px',
-        marginTop: '15px'
+        letterSpacing: '2px'
       }}>
-        APERTURE AI • SMART VOICE COACH
+        APERTURE AI • VOICE COACH
       </p>
     </main>
   );
