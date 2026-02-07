@@ -5,14 +5,13 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
-      return "ERROR: No API Key";
+      return "ERROR: No API Key found in Vercel environment variables";
     }
 
     const genAI = new GoogleGenerativeAI(key);
     
-    // FIXED: Updated to gemini-2.5-flash (1.5 was shut down Sept 2025)
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash", // ✅ Current stable model as of Feb 2026
+      model: "gemini-2.5-flash",
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -23,33 +22,24 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     
     const base64Data = base64Image.split(",")[1];
     
-    const prompt = `You are a computer vision system analyzing a camera frame for HUMAN PRESENCE ONLY.
+    // ✅ NEW PROMPT: Creative photography advice
+    const prompt = `You are a professional photography coach. Analyze this photo and give ONE creative posing tip.
 
-CRITICAL RULES:
-1. A human MUST have: visible face OR recognizable body structure (head, torso, limbs)
-2. 2D images/posters/screens showing humans = OBJECT (not real humans)
-3. Partial views (just hands, just feet) = OBJECT
-4. Reflections or shadows = OBJECT
-5. Toys, figurines, dolls = OBJECT
+Focus on:
+- Facial expression (eyes, smile, head tilt)
+- Body language (posture, hand placement, confidence)
+- Camera angle suggestions
+- Overall composition
 
-ANALYSIS STEPS:
-Step 1: Describe what you see in 5 words or less
-Step 2: Does it match ALL human criteria? (face OR full body structure)
-Step 3: Output your classification
-
-OUTPUT FORMAT (choose ONE):
-- Real human detected → "HUMAN: [posing tip under 12 words]"
-- Anything else → "OBJECT: [main item name]"
-- Unclear/blurry → "EMPTY"
+Keep your advice under 15 words, friendly, and actionable.
 
 Examples:
-✓ "HUMAN: Straighten shoulders and lift chin"
-✓ "OBJECT: Water bottle"
-✓ "OBJECT: Poster of person on wall"
-✓ "OBJECT: Action figure"
-✓ "EMPTY"
+- "Relax your shoulders and give a natural smile - you look great!"
+- "Tilt your head slightly right and soften your gaze"
+- "Try angling your body 45° to the camera for more depth"
+- "Lower the camera slightly and look up for a flattering angle"
 
-Be extremely strict - when in doubt, classify as OBJECT.`;
+Now analyze this pose and give your advice:`;
 
     const result = await model.generateContent([
       prompt,
@@ -57,12 +47,13 @@ Be extremely strict - when in doubt, classify as OBJECT.`;
     ]);
 
     const text = result.response.text().trim();
-    console.log("🤖 AI Raw Response:", text);
+    console.log("🤖 Gemini Creative Advice:", text);
     
-    return text;
+    // Return with HUMAN: prefix so page.tsx can parse it
+    return "HUMAN: " + text;
     
   } catch (error: any) {
-    console.error("AI Action Error:", error.message);
+    console.error("❌ Gemini API Error:", error.message);
     return "ERROR: " + error.message;
   }
 }
