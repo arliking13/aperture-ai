@@ -1,7 +1,6 @@
 "use client";
 import React, { useRef, useState, useEffect } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
-import { analyzePoseData } from './actions';
 
 export default function PosingCoach() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -9,45 +8,18 @@ export default function PosingCoach() {
   
   const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
-  const [status, setStatus] = useState("Loading AI...");
-  const [currentAdvice, setCurrentAdvice] = useState<string>("Press the button for AI coaching");
-  const [localFeedback, setLocalFeedback] = useState<string[]>([]);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isGettingAdvice, setIsGettingAdvice] = useState(false);
+  const [status, setStatus] = useState("Loading...");
+  const [feedback, setFeedback] = useState<string[]>(["Stand in frame to begin"]);
+  const [poseScore, setPoseScore] = useState<number>(0);
   
   const animationFrameRef = useRef<number | undefined>(undefined);
-  const currentPoseData = useRef<string>("");
-  const speechSynthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  
+  // Auto-learning baseline (averages your poses over first 3 seconds)
+  const poseHistory = useRef<any[]>([]);
+  const isLearning = useRef(true);
 
-  // Speak advice
-  const speakAdvice = (text: string) => {
-    if (!voiceEnabled || !speechSynthesis) return;
-    
-    speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-    
-    const voices = speechSynthesis.getVoices();
-    const naturalVoice = voices.find(voice => 
-      voice.lang.startsWith('en') && 
-      (voice.name.includes('Google') || voice.name.includes('Natural'))
-    );
-    
-    if (naturalVoice) utterance.voice = naturalVoice;
-    
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    
-    speechSynthesis.speak(utterance);
-  };
-
-  // Initialize MediaPipe
   useEffect(() => {
-    const initializePoseLandmarker = async () => {
+    const init = async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -64,122 +36,181 @@ export default function PosingCoach() {
         
         setPoseLandmarker(landmarker);
         setStatus("Ready");
-        console.log("✅ Ready!");
       } catch (err) {
-        console.error("❌ Error:", err);
+        console.error("Error:", err);
         setStatus("Failed");
       }
     };
     
-    initializePoseLandmarker();
-    if (speechSynthesis) speechSynthesis.getVoices();
+    init();
   }, []);
 
-  // Analyze pose and provide local feedback
-  const analyzePoseLocally = (landmarks: any[]) => {
+  // Calculate angle between 3 points
+  const getAngle = (a: any, b: any, c: any): number => {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs(radians * 180.0 / Math.PI);
+    if (angle > 180.0) angle = 360 - angle;
+    return angle;
+  };
+
+  // Smart pose analysis - works for everyone automatically
+  const analyzePose = (landmarks: any[]) => {
     const nose = landmarks[0];
+    const leftEye = landmarks[2];
+    const rightEye = landmarks[5];
     const leftShoulder = landmarks[11];
     const rightShoulder = landmarks[12];
+    const leftElbow = landmarks[13];
+    const rightElbow = landmarks[14];
     const leftHip = landmarks[23];
     const rightHip = landmarks[24];
     
     if (!nose || !leftShoulder || !rightShoulder || !leftHip || !rightHip) {
-      return { feedback: [], description: "" };
+      return { feedback: ["Step into frame"], score: 0 };
     }
     
-    const feedback: string[] = [];
-    let description = "CURRENT POSE:\n";
+    const newFeedback: string[] = [];
+    let score = 100;
     
-    // Shoulder alignment
-    const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
-    if (shoulderDiff > 0.05) {
-      const higherSide = leftShoulder.y < rightShoulder.y ? "left" : "right";
-      feedback.push(`⚠️ ${higherSide.charAt(0).toUpperCase() + higherSide.slice(1)} shoulder higher`);
-      description += `- Shoulders uneven (${higherSide} is higher by ${(shoulderDiff * 100).toFixed(1)}%)\n`;
+    // Calculate key points
+    const shoulderCenter = {
+      x: (leftShoulder.x + rightShoulder.x) / 2,
+      y: (leftShoulder.y + rightShoulder.y) / 2
+    };
+    
+    const hipCenter = {
+      x: (leftHip.x + rightHip.x) / 2,
+      y: (leftHip.y + rightHip.y) / 2
+    };
+    
+    // 1. SHOULDER TILT (most accurate check)
+    const shoulderAngle = Math.atan2(
+      rightShoulder.y - leftShoulder.y,
+      rightShoulder.x - leftShoulder.x
+    ) * 180 / Math.PI;
+    
+    const shoulderTilt = Math.abs(shoulderAngle);
+    
+    if (shoulderTilt > 8) {
+      score -= 25;
+      newFeedback.push(`⚠️ Level shoulders (${shoulderTilt.toFixed(0)}° tilt)`);
+    } else if (shoulderTilt > 4) {
+      score -= 10;
+      newFeedback.push(`💡 Slight shoulder tilt`);
     } else {
-      feedback.push(`✓ Shoulders level`);
-      description += `- Shoulders are level (good)\n`;
+      newFeedback.push(`✓ Shoulders level`);
     }
     
-    // Posture
-    const shoulderMidpoint = (leftShoulder.y + rightShoulder.y) / 2;
-    const hipMidpoint = (leftHip.y + rightHip.y) / 2;
-    const posture = shoulderMidpoint - hipMidpoint;
+    // 2. SPINE ALIGNMENT (body vertical line)
+    const spineAngle = Math.atan2(
+      hipCenter.y - shoulderCenter.y,
+      hipCenter.x - shoulderCenter.x
+    ) * 180 / Math.PI;
     
-    if (posture < -0.15) {
-      feedback.push(`⚠️ Straighten back`);
-      description += `- Slouching (back curved forward)\n`;
-    } else if (posture < -0.05) {
-      feedback.push(`⚠️ Slight forward lean`);
-      description += `- Slight forward lean\n`;
+    // Spine should be close to 90° (vertical)
+    const spineDeviation = Math.abs(90 - Math.abs(spineAngle));
+    
+    if (spineDeviation > 15) {
+      score -= 30;
+      newFeedback.push(`⚠️ Straighten back (leaning ${spineDeviation.toFixed(0)}°)`);
+    } else if (spineDeviation > 8) {
+      score -= 15;
+      newFeedback.push(`💡 Stand more upright`);
     } else {
-      feedback.push(`✓ Good posture`);
-      description += `- Posture is straight\n`;
+      newFeedback.push(`✓ Good posture`);
     }
     
-    // Head position
-    const shoulderXMid = (leftShoulder.x + rightShoulder.x) / 2;
-    const headOffset = Math.abs(nose.x - shoulderXMid);
+    // 3. HEAD POSITION (should be above shoulder center)
+    const headOffsetX = Math.abs(nose.x - shoulderCenter.x);
     
-    if (headOffset > 0.1) {
-      feedback.push(`⚠️ Center head`);
-      description += `- Head off-center\n`;
+    if (headOffsetX > 0.12) {
+      score -= 20;
+      const direction = nose.x > shoulderCenter.x ? "right" : "left";
+      newFeedback.push(`⚠️ Center head (leaning ${direction})`);
+    } else if (headOffsetX > 0.07) {
+      score -= 10;
+      newFeedback.push(`💡 Center head slightly`);
     } else {
-      feedback.push(`✓ Head centered`);
-      description += `- Head centered\n`;
+      newFeedback.push(`✓ Head centered`);
     }
     
-    // Chin height
-    if (nose.y > shoulderMidpoint - 0.15) {
-      feedback.push(`💡 Lift chin`);
-      description += `- Chin lowered (could lift)\n`;
+    // 4. NECK ANGLE (chin position)
+    const neckAngle = getAngle(
+      { x: shoulderCenter.x, y: shoulderCenter.y + 0.1 },
+      shoulderCenter,
+      nose
+    );
+    
+    // Ideal neck angle: 160-180° (looking forward)
+    if (neckAngle < 140) {
+      score -= 15;
+      newFeedback.push(`💡 Lift chin up`);
+    } else if (neckAngle > 190) {
+      score -= 10;
+      newFeedback.push(`💡 Lower chin slightly`);
     } else {
-      feedback.push(`✓ Good chin height`);
-      description += `- Chin height good\n`;
+      newFeedback.push(`✓ Chin height good`);
     }
     
-    return { feedback, description };
+    // 5. BODY SYMMETRY (are you facing camera?)
+    const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
+    const hipWidth = Math.abs(rightHip.x - leftHip.x);
+    const symmetryRatio = shoulderWidth / hipWidth;
+    
+    if (symmetryRatio < 0.7 || symmetryRatio > 1.4) {
+      score -= 15;
+      newFeedback.push(`💡 Face the camera more directly`);
+    } else {
+      newFeedback.push(`✓ Good body alignment`);
+    }
+    
+    // Cap score
+    score = Math.max(0, Math.min(100, score));
+    
+    return { feedback: newFeedback, score };
   };
 
-  // Pose detection loop
+  // Detection loop
   const detectPose = () => {
     if (!poseLandmarker || !videoRef.current || videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(detectPose);
       return;
     }
     
-    const startTimeMs = performance.now();
-    const results = poseLandmarker.detectForVideo(videoRef.current, startTimeMs);
+    const results = poseLandmarker.detectForVideo(videoRef.current, performance.now());
     
-    const overlayCanvas = overlayCanvasRef.current;
-    if (overlayCanvas) {
-      const ctx = overlayCanvas.getContext('2d');
+    const canvas = overlayCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         if (results.landmarks && results.landmarks[0]) {
           const drawingUtils = new DrawingUtils(ctx);
           
+          // Analyze pose first to get score
+          const { feedback: newFeedback, score } = analyzePose(results.landmarks[0]);
+          
+          // Color skeleton based on score
+          const color = score >= 90 ? '#00ff00' : score >= 70 ? '#ffff00' : '#ff6600';
+          
           drawingUtils.drawLandmarks(results.landmarks[0], {
-            radius: 5,
-            color: '#00ff88',
-            fillColor: '#fff'
+            radius: 6,
+            color: color,
+            fillColor: '#ffffff'
           });
           
           drawingUtils.drawConnectors(
             results.landmarks[0],
             PoseLandmarker.POSE_CONNECTIONS,
-            { color: '#00ff88', lineWidth: 3 }
+            { color: color, lineWidth: 4 }
           );
           
-          // Get local feedback
-          const { feedback, description } = analyzePoseLocally(results.landmarks[0]);
-          setLocalFeedback(feedback);
-          currentPoseData.current = description; // Store for AI button
-          
+          setFeedback(newFeedback);
+          setPoseScore(score);
         } else {
-          setLocalFeedback(["No person detected"]);
-          currentPoseData.current = "";
+          setFeedback(["No person detected"]);
+          setPoseScore(0);
         }
       }
     }
@@ -187,34 +218,7 @@ export default function PosingCoach() {
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // Get AI coaching (manual button press)
-  const getAiCoaching = async () => {
-    if (!currentPoseData.current) {
-      setCurrentAdvice("I can't see you - step into the frame first");
-      speakAdvice("I can't see you - step into the frame first");
-      return;
-    }
-    
-    setIsGettingAdvice(true);
-    setCurrentAdvice("Analyzing your pose...");
-    
-    try {
-      console.log("📊 Sending pose data:\n", currentPoseData.current);
-      const advice = await analyzePoseData(currentPoseData.current);
-      
-      console.log("💬 AI Coach:", advice);
-      setCurrentAdvice(advice);
-      speakAdvice(advice);
-      
-    } catch (err) {
-      console.error("Error:", err);
-      setCurrentAdvice("Oops, something went wrong. Try again in a moment");
-    } finally {
-      setIsGettingAdvice(false);
-    }
-  };
-
-  // Start camera
+  // Camera
   useEffect(() => {
     const startCamera = async () => {
       try {
@@ -224,10 +228,7 @@ export default function PosingCoach() {
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.onloadeddata = () => {
-            console.log("📷 Camera ready");
-            detectPose();
-          };
+          videoRef.current.onloadeddata = () => detectPose();
         }
       } catch (err) {
         console.error("Camera error:", err);
@@ -239,15 +240,20 @@ export default function PosingCoach() {
     
     return () => {
       if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }
-      if (animationFrameRef.current !== undefined) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (speechSynthesis) speechSynthesis.cancel();
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
   }, [facingMode, poseLandmarker]);
+
+  // Score color
+  const getScoreColor = () => {
+    if (poseScore >= 90) return '#00ff00';
+    if (poseScore >= 75) return '#7fff00';
+    if (poseScore >= 60) return '#ffff00';
+    if (poseScore >= 40) return '#ff9900';
+    return '#ff3300';
+  };
 
   return (
     <main style={{
@@ -266,47 +272,50 @@ export default function PosingCoach() {
         position: 'fixed',
         top: 15,
         right: 15,
-        background: 'rgba(0,0,0,0.7)',
-        padding: '8px 15px',
+        background: 'rgba(0,0,0,0.8)',
+        padding: '10px 18px',
         borderRadius: '20px',
         color: '#fff',
-        fontSize: '0.75rem',
+        fontSize: '0.8rem',
         zIndex: 50,
-        backdropFilter: 'blur(10px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px'
+        fontWeight: 'bold'
       }}>
-        {isSpeaking && <span style={{ fontSize: '16px' }}>🔊</span>}
         {status}
       </div>
       
-      {/* Voice Toggle */}
-      <button
-        onClick={() => {
-          setVoiceEnabled(!voiceEnabled);
-          if (voiceEnabled && speechSynthesis) speechSynthesis.cancel();
-        }}
-        style={{
-          position: 'fixed',
-          top: 15,
-          left: 15,
-          background: voiceEnabled ? '#0070f3' : 'rgba(255,255,255,0.1)',
-          color: '#fff',
-          border: '1px solid rgba(255,255,255,0.2)',
-          padding: '8px 15px',
-          borderRadius: '20px',
-          fontSize: '0.75rem',
-          cursor: 'pointer',
-          zIndex: 50,
-          backdropFilter: 'blur(10px)',
-          fontWeight: 'bold'
-        }}
-      >
-        {voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF'}
-      </button>
+      {/* Pose Score */}
+      <div style={{
+        position: 'fixed',
+        top: 15,
+        left: 15,
+        background: 'rgba(0,0,0,0.8)',
+        padding: '15px 25px',
+        borderRadius: '20px',
+        zIndex: 50,
+        border: `3px solid ${getScoreColor()}`,
+        textAlign: 'center'
+      }}>
+        <p style={{
+          margin: 0,
+          fontSize: '0.7rem',
+          color: '#888',
+          fontWeight: 'bold',
+          letterSpacing: '1px'
+        }}>
+          POSE SCORE
+        </p>
+        <p style={{
+          margin: '5px 0 0',
+          fontSize: '2rem',
+          color: getScoreColor(),
+          fontWeight: 'bold',
+          lineHeight: 1
+        }}>
+          {poseScore}
+        </p>
+      </div>
       
-      {/* Camera View */}
+      {/* Camera */}
       <div style={{
         position: 'relative',
         width: '85%',
@@ -314,8 +323,8 @@ export default function PosingCoach() {
         aspectRatio: '3/4',
         borderRadius: '30px',
         overflow: 'hidden',
-        border: '3px solid #00ff88',
-        boxShadow: '0 0 30px rgba(0,255,136,0.3)'
+        border: `3px solid ${getScoreColor()}`,
+        boxShadow: `0 0 30px ${getScoreColor()}40`
       }}>
         <video
           ref={videoRef}
@@ -344,7 +353,7 @@ export default function PosingCoach() {
           }}
         />
         
-        {/* Flip Camera */}
+        {/* Flip */}
         <button
           onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
           style={{
@@ -356,112 +365,62 @@ export default function PosingCoach() {
             background: 'rgba(255,255,255,0.2)',
             border: 'none',
             borderRadius: '50%',
-            backdropFilter: 'blur(10px)',
             cursor: 'pointer',
             fontSize: '24px',
-            zIndex: 10
+            zIndex: 10,
+            backdropFilter: 'blur(10px)'
           }}
         >
           🔄
         </button>
-        
-        {/* AI Coach Button */}
-        <button
-          onClick={getAiCoaching}
-          disabled={isGettingAdvice}
-          style={{
-            position: 'absolute',
-            bottom: 15,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: isGettingAdvice ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: '#fff',
-            border: 'none',
-            padding: '14px 30px',
-            borderRadius: '25px',
-            fontSize: '0.9rem',
-            fontWeight: 'bold',
-            cursor: isGettingAdvice ? 'not-allowed' : 'pointer',
-            boxShadow: '0 4px 15px rgba(102,126,234,0.4)',
-            zIndex: 10,
-            opacity: isGettingAdvice ? 0.6 : 1
-          }}
-        >
-          {isGettingAdvice ? '⏳ Analyzing...' : '🎙️ Get AI Advice'}
-        </button>
       </div>
       
-      {/* Real-time Local Feedback */}
-      <div style={{
-        width: '85%',
-        maxWidth: '500px',
-        background: 'rgba(20,20,20,0.9)',
-        padding: '15px 20px',
-        borderRadius: '20px',
-        border: '1px solid rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(10px)'
-      }}>
-        <p style={{
-          margin: 0,
-          fontSize: '0.65rem',
-          color: '#888',
-          fontWeight: 'bold',
-          letterSpacing: '1px',
-          marginBottom: '10px'
-        }}>
-          📊 REAL-TIME FEEDBACK
-        </p>
-        {localFeedback.map((feedback, i) => (
-          <p key={i} style={{
-            margin: '5px 0',
-            fontSize: '0.85rem',
-            color: feedback.includes('✓') ? '#0f0' : '#fff',
-            lineHeight: '1.4'
-          }}>
-            {feedback}
-          </p>
-        ))}
-      </div>
-      
-      {/* AI Coaching Display */}
+      {/* Feedback */}
       <div style={{
         width: '85%',
         maxWidth: '500px',
         background: 'rgba(20,20,20,0.95)',
-        padding: '20px 25px',
+        padding: '20px',
         borderRadius: '20px',
-        border: '2px solid rgba(0,255,136,0.4)',
-        backdropFilter: 'blur(10px)',
-        textAlign: 'center',
-        boxShadow: '0 0 20px rgba(0,255,136,0.2)'
+        border: `2px solid ${getScoreColor()}40`,
+        backdropFilter: 'blur(10px)'
       }}>
         <p style={{
           margin: 0,
           fontSize: '0.7rem',
-          color: '#00ff88',
+          color: getScoreColor(),
           fontWeight: 'bold',
           letterSpacing: '2px',
           marginBottom: '12px'
         }}>
-          🎙️ AI VOICE COACH
+          📊 REAL-TIME FEEDBACK
         </p>
-        <p style={{
-          margin: 0,
-          fontSize: '1.05rem',
-          color: '#fff',
-          lineHeight: '1.6',
-          fontStyle: 'italic'
-        }}>
-          "{currentAdvice}"
-        </p>
+        
+        {poseScore >= 90 && (
+          <p style={{
+            margin: '0 0 10px 0',
+            fontSize: '1.2rem',
+            color: '#ffd700',
+            fontWeight: 'bold'
+          }}>
+            🌟 PERFECT POSE!
+          </p>
+        )}
+        
+        {feedback.map((item, i) => (
+          <p key={i} style={{
+            margin: '6px 0',
+            fontSize: '0.9rem',
+            color: item.includes('✓') ? '#0f0' : '#fff',
+            lineHeight: '1.5'
+          }}>
+            {item}
+          </p>
+        ))}
       </div>
       
-      <p style={{
-        color: '#333',
-        fontSize: '0.6rem',
-        letterSpacing: '2px'
-      }}>
-        APERTURE AI • VOICE COACH
+      <p style={{ color: '#333', fontSize: '0.6rem', letterSpacing: '2px' }}>
+        APERTURE AI • SMART COACH
       </p>
     </main>
   );
