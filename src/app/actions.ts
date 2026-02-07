@@ -1,7 +1,7 @@
 "use server";
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-export async function analyzeFrame(base64Image: string): Promise<string> {
+export async function analyzePoseData(poseDescription: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
@@ -20,41 +20,42 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
       ]
     });
     
-    const base64Data = base64Image.split(",")[1];
-    
-    const prompt = `You are a friendly, encouraging photography coach speaking directly to someone.
+    const prompt = `You are a friendly, encouraging posing coach speaking to someone in real-time.
 
-Analyze their pose and give ONE piece of natural, conversational advice as if you're talking to them in person.
+Based on their current pose measurements, give ONE piece of natural, conversational coaching advice.
+
+POSE DATA:
+${poseDescription}
 
 Guidelines:
-- Speak naturally like a human coach, not a robot
-- Be encouraging and positive in tone
-- Keep it to 1-2 sentences (under 20 words)
-- Mix technical tips with encouragement
-- Vary your language each time
-- Use casual, friendly phrasing
+- Speak like a real human coach, warm and encouraging
+- Keep it to 1-2 short sentences (under 25 words total)
+- Be specific about what you see in the data
+- If the pose is good, give genuine praise
+- If there are issues, suggest ONE fix at a time
+- Vary your phrasing naturally
+- Sound conversational, not robotic
 
-Examples of GOOD advice:
-- "Hey, try relaxing your shoulders a bit - you're looking a little tense there"
-- "That's better! Now let's work on bringing your chin up just slightly"
-- "You're doing great, but I think tilting your head a bit to the left would look even better"
-- "Perfect posture! Maybe add a subtle smile to really complete the look"
-- "Almost there - just straighten your back a touch and you'll nail it"
+Examples of good coaching:
+- "Hey, I notice your left shoulder is higher - try leveling them out"
+- "Your posture looks great! Maybe just lift your chin a tiny bit more"
+- "You're slouching a little, let's straighten that back"
+- "Perfect! That's an excellent pose, just hold it right there"
+- "Almost there - relax your shoulders, they're a bit tense"
 
-Analyze this pose and give your natural, conversational coaching:`;
+Now give your natural coaching advice based on the pose data:`;
 
-    const result = await model.generateContent([
-      prompt,
-      { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
-    ]);
-
+    const result = await model.generateContent(prompt);
     const text = result.response.text().trim();
-    console.log("🤖 AI Coach says:", text);
     
-    return "HUMAN: " + text;
+    console.log("🎙️ AI Coach:", text);
+    return text;
     
   } catch (error: any) {
     console.error("AI Error:", error.message);
-    return "ERROR: " + error.message;
+    if (error.message.includes("429")) {
+      return "Let's take a quick break"; // Natural response to rate limit
+    }
+    return "Keep holding that pose";
   }
 }
