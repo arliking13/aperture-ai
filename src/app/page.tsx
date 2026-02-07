@@ -12,6 +12,7 @@ export default function PosingCoach() {
   const [status, setStatus] = useState("Loading AI...");
   const [currentAdvice, setCurrentAdvice] = useState<string>("Press the button for AI coaching");
   const [localFeedback, setLocalFeedback] = useState<string[]>([]);
+  const [poseScore, setPoseScore] = useState<number>(0);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isGettingAdvice, setIsGettingAdvice] = useState(false);
@@ -19,6 +20,15 @@ export default function PosingCoach() {
   const animationFrameRef = useRef<number | undefined>(undefined);
   const currentPoseData = useRef<string>("");
   const speechSynthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
+
+  // Get color based on score
+  const getScoreColor = (score: number) => {
+    if (score >= 90) return '#00ff00'; // Perfect - Green
+    if (score >= 75) return '#7fff00'; // Great - Yellow-green
+    if (score >= 60) return '#ffff00'; // Good - Yellow
+    if (score >= 40) return '#ff9900'; // Needs work - Orange
+    return '#ff3300'; // Poor - Red
+  };
 
   // Speak advice
   const speakAdvice = (text: string) => {
@@ -75,7 +85,7 @@ export default function PosingCoach() {
     if (speechSynthesis) speechSynthesis.getVoices();
   }, []);
 
-  // FIXED: Improved pose analysis with angle-based calculations
+  // Improved pose analysis with scoring and tilt info
   const analyzePoseLocally = (landmarks: any[]) => {
     const nose = landmarks[0];
     const leftShoulder = landmarks[11];
@@ -84,11 +94,12 @@ export default function PosingCoach() {
     const rightHip = landmarks[24];
     
     if (!nose || !leftShoulder || !rightShoulder || !leftHip || !rightHip) {
-      return { feedback: [], description: "" };
+      return { feedback: [], description: "", score: 0 };
     }
     
     const feedback: string[] = [];
     let description = "CURRENT POSE:\n";
+    let score = 100;
     
     // Calculate centers
     const shoulderCenter = {
@@ -101,7 +112,7 @@ export default function PosingCoach() {
       y: (leftHip.y + rightHip.y) / 2
     };
     
-    // 1. SHOULDER TILT (angle-based, more accurate)
+    // 1. SHOULDER TILT
     const shoulderAngle = Math.atan2(
       rightShoulder.y - leftShoulder.y,
       rightShoulder.x - leftShoulder.x
@@ -110,45 +121,50 @@ export default function PosingCoach() {
     const shoulderTilt = Math.abs(shoulderAngle);
     
     if (shoulderTilt > 8) {
+      score -= 25;
       const higherSide = leftShoulder.y < rightShoulder.y ? "left" : "right";
-      feedback.push(`⚠️ ${higherSide.charAt(0).toUpperCase() + higherSide.slice(1)} shoulder higher`);
+      feedback.push(`⚠️ Shoulders tilted ${shoulderTilt.toFixed(1)}° (${higherSide} higher)`);
       description += `- Shoulders uneven (${shoulderTilt.toFixed(1)}° tilt, ${higherSide} higher)\n`;
     } else if (shoulderTilt > 4) {
-      feedback.push(`💡 Minor shoulder tilt`);
+      score -= 10;
+      feedback.push(`💡 Slight shoulder tilt (${shoulderTilt.toFixed(1)}°)`);
       description += `- Slight shoulder tilt (${shoulderTilt.toFixed(1)}°)\n`;
     } else {
-      feedback.push(`✓ Shoulders level`);
+      feedback.push(`✓ Shoulders level (${shoulderTilt.toFixed(1)}°)`);
       description += `- Shoulders level (${shoulderTilt.toFixed(1)}° - excellent)\n`;
     }
     
-    // 2. SPINE ALIGNMENT (proper angle calculation)
+    // 2. SPINE ALIGNMENT
     const spineAngle = Math.atan2(
       hipCenter.y - shoulderCenter.y,
       hipCenter.x - shoulderCenter.x
     ) * 180 / Math.PI;
     
-    // Spine should be close to 90° (vertical) when standing straight
     const spineDeviation = Math.abs(90 - Math.abs(spineAngle));
     
     if (spineDeviation > 15) {
-      feedback.push(`⚠️ Straighten back`);
+      score -= 30;
+      feedback.push(`⚠️ Back leaning ${spineDeviation.toFixed(1)}°`);
       description += `- Slouching detected (${spineDeviation.toFixed(1)}° lean)\n`;
     } else if (spineDeviation > 8) {
-      feedback.push(`💡 Stand more upright`);
+      score -= 15;
+      feedback.push(`💡 Stand more upright (${spineDeviation.toFixed(1)}° lean)`);
       description += `- Slight forward lean (${spineDeviation.toFixed(1)}°)\n`;
     } else {
-      feedback.push(`✓ Good posture`);
+      feedback.push(`✓ Good posture (${spineDeviation.toFixed(1)}° deviation)`);
       description += `- Posture is straight (${spineDeviation.toFixed(1)}° deviation - good)\n`;
     }
     
     // 3. HEAD POSITION
-    const headOffset = Math.abs(nose.x - shoulderCenter.x);
+    const headOffsetX = Math.abs(nose.x - shoulderCenter.x);
     
-    if (headOffset > 0.12) {
+    if (headOffsetX > 0.12) {
+      score -= 20;
       const direction = nose.x > shoulderCenter.x ? "right" : "left";
-      feedback.push(`⚠️ Center head (leaning ${direction})`);
-      description += `- Head off-center (${(headOffset * 100).toFixed(1)}% offset)\n`;
-    } else if (headOffset > 0.07) {
+      feedback.push(`⚠️ Head leaning ${direction}`);
+      description += `- Head off-center (${(headOffsetX * 100).toFixed(1)}% offset to ${direction})\n`;
+    } else if (headOffsetX > 0.07) {
+      score -= 10;
       feedback.push(`💡 Center head slightly`);
       description += `- Head slightly off-center\n`;
     } else {
@@ -160,17 +176,22 @@ export default function PosingCoach() {
     const chinHeight = shoulderCenter.y - nose.y;
     
     if (chinHeight < 0.12) {
-      feedback.push(`💡 Lift chin`);
+      score -= 15;
+      feedback.push(`💡 Lift chin up`);
       description += `- Chin lowered (could lift)\n`;
     } else if (chinHeight > 0.25) {
+      score -= 10;
       feedback.push(`💡 Lower chin slightly`);
       description += `- Chin too high\n`;
     } else {
-      feedback.push(`✓ Good chin height`);
+      feedback.push(`✓ Chin height good`);
       description += `- Chin height good\n`;
     }
     
-    return { feedback, description };
+    // Cap score
+    score = Math.max(0, Math.min(100, score));
+    
+    return { feedback, description, score };
   };
 
   // Pose detection loop
@@ -190,28 +211,34 @@ export default function PosingCoach() {
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         
         if (results.landmarks && results.landmarks[0]) {
+          // Get feedback and score first
+          const { feedback, description, score } = analyzePoseLocally(results.landmarks[0]);
+          
+          // Color based on score
+          const color = getScoreColor(score);
+          
           const drawingUtils = new DrawingUtils(ctx);
           
           drawingUtils.drawLandmarks(results.landmarks[0], {
             radius: 5,
-            color: '#00ff88',
+            color: color,
             fillColor: '#fff'
           });
           
           drawingUtils.drawConnectors(
             results.landmarks[0],
             PoseLandmarker.POSE_CONNECTIONS,
-            { color: '#00ff88', lineWidth: 3 }
+            { color: color, lineWidth: 3 }
           );
           
-          // Get local feedback with improved algorithm
-          const { feedback, description } = analyzePoseLocally(results.landmarks[0]);
           setLocalFeedback(feedback);
           currentPoseData.current = description;
+          setPoseScore(score);
           
         } else {
           setLocalFeedback(["No person detected"]);
           currentPoseData.current = "";
+          setPoseScore(0);
         }
       }
     }
@@ -281,6 +308,8 @@ export default function PosingCoach() {
     };
   }, [facingMode, poseLandmarker]);
 
+  const currentColor = getScoreColor(poseScore);
+
   return (
     <main style={{
       background: '#000',
@@ -313,6 +342,39 @@ export default function PosingCoach() {
         {status}
       </div>
       
+      {/* Pose Score */}
+      <div style={{
+        position: 'fixed',
+        top: 15,
+        left: 15,
+        background: 'rgba(0,0,0,0.8)',
+        padding: '12px 20px',
+        borderRadius: '20px',
+        zIndex: 50,
+        border: `3px solid ${currentColor}`,
+        textAlign: 'center',
+        backdropFilter: 'blur(10px)'
+      }}>
+        <p style={{
+          margin: 0,
+          fontSize: '0.65rem',
+          color: '#888',
+          fontWeight: 'bold',
+          letterSpacing: '1.5px'
+        }}>
+          POSE SCORE
+        </p>
+        <p style={{
+          margin: '5px 0 0',
+          fontSize: '2rem',
+          color: currentColor,
+          fontWeight: 'bold',
+          lineHeight: 1
+        }}>
+          {poseScore}
+        </p>
+      </div>
+      
       {/* Voice Toggle */}
       <button
         onClick={() => {
@@ -321,21 +383,21 @@ export default function PosingCoach() {
         }}
         style={{
           position: 'fixed',
-          top: 15,
+          top: 80,
           left: 15,
           background: voiceEnabled ? '#0070f3' : 'rgba(255,255,255,0.1)',
           color: '#fff',
           border: '1px solid rgba(255,255,255,0.2)',
           padding: '8px 15px',
           borderRadius: '20px',
-          fontSize: '0.75rem',
+          fontSize: '0.7rem',
           cursor: 'pointer',
           zIndex: 50,
           backdropFilter: 'blur(10px)',
           fontWeight: 'bold'
         }}
       >
-        {voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF'}
+        {voiceEnabled ? '🔊 Voice' : '🔇 Mute'}
       </button>
       
       {/* Camera View */}
@@ -346,8 +408,9 @@ export default function PosingCoach() {
         aspectRatio: '3/4',
         borderRadius: '30px',
         overflow: 'hidden',
-        border: '3px solid #00ff88',
-        boxShadow: '0 0 30px rgba(0,255,136,0.3)'
+        border: `3px solid ${currentColor}`,
+        boxShadow: `0 0 30px ${currentColor}50`,
+        transition: 'border-color 0.3s, box-shadow 0.3s'
       }}>
         <video
           ref={videoRef}
@@ -375,6 +438,22 @@ export default function PosingCoach() {
             transform: facingMode === "user" ? 'scaleX(-1)' : 'none'
           }}
         />
+        
+        {/* Perfect Pose Indicator */}
+        {poseScore >= 90 && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: '4rem',
+            animation: 'pulse 1s infinite',
+            pointerEvents: 'none',
+            textShadow: '0 0 20px rgba(0,255,0,0.8)'
+          }}>
+            🌟
+          </div>
+        )}
         
         {/* Flip Camera */}
         <button
@@ -430,19 +509,33 @@ export default function PosingCoach() {
         background: 'rgba(20,20,20,0.9)',
         padding: '15px 20px',
         borderRadius: '20px',
-        border: '1px solid rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(10px)'
+        border: `1px solid ${currentColor}40`,
+        backdropFilter: 'blur(10px)',
+        transition: 'border-color 0.3s'
       }}>
         <p style={{
           margin: 0,
           fontSize: '0.65rem',
-          color: '#888',
+          color: currentColor,
           fontWeight: 'bold',
           letterSpacing: '1px',
-          marginBottom: '10px'
+          marginBottom: '10px',
+          transition: 'color 0.3s'
         }}>
           📊 REAL-TIME FEEDBACK
         </p>
+        
+        {poseScore >= 90 && (
+          <p style={{
+            margin: '0 0 10px 0',
+            fontSize: '1.1rem',
+            color: '#ffd700',
+            fontWeight: 'bold'
+          }}>
+            🌟 PERFECT POSE!
+          </p>
+        )}
+        
         {localFeedback.map((feedback, i) => (
           <p key={i} style={{
             margin: '5px 0',
@@ -495,6 +588,14 @@ export default function PosingCoach() {
       }}>
         APERTURE AI • VOICE COACH
       </p>
+      
+      {/* CSS Animation for pulse */}
+      <style jsx>{`
+        @keyframes pulse {
+          0%, 100% { transform: translate(-50%, -50%) scale(1); }
+          50% { transform: translate(-50%, -50%) scale(1.1); }
+        }
+      `}</style>
     </main>
   );
 }
