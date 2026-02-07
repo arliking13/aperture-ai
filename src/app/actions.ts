@@ -5,13 +5,14 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
-      console.error("No API Key found");
       return "ERROR: No API Key";
     }
 
     const genAI = new GoogleGenerativeAI(key);
+    
+    // CHANGE THIS LINE: Use 'gemini-1.5-flash' instead of 'gemini-1.5-flash-latest'
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash-latest",
+      model: "gemini-1.5-flash", // Fixed: removed '-latest'
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -22,7 +23,6 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     
     const base64Data = base64Image.split(",")[1];
     
-    // NEW DETECTION + DESCRIPTION PROMPT
     const prompt = `You are a vision AI analyzing a camera frame.
 
 TASK:
@@ -48,8 +48,7 @@ Be honest about what you actually see.`;
     ]);
 
     const text = result.response.text().trim();
-    
-    console.log("🤖 AI Raw Response:", text); // This appears in Vercel Logs
+    console.log("🤖 AI Raw Response:", text);
     
     return text;
     
