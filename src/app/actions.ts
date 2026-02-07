@@ -10,8 +10,9 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
 
     const genAI = new GoogleGenerativeAI(key);
     
+    // FIXED: Updated to gemini-2.5-flash (1.5 was shut down Sept 2025)
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash", // ✅ Current stable model as of Feb 2026
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -22,7 +23,6 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     
     const base64Data = base64Image.split(",")[1];
     
-    // ENHANCED PROMPT - Stricter human detection criteria
     const prompt = `You are a computer vision system analyzing a camera frame for HUMAN PRESENCE ONLY.
 
 CRITICAL RULES:
