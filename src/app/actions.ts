@@ -5,7 +5,7 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
-      return "ERROR: No API Key found in Vercel environment variables";
+      return "ERROR: No API Key";
     }
 
     const genAI = new GoogleGenerativeAI(key);
@@ -22,24 +22,26 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     
     const base64Data = base64Image.split(",")[1];
     
-    // ✅ NEW PROMPT: Creative photography advice
-    const prompt = `You are a professional photography coach. Analyze this photo and give ONE creative posing tip.
+    const prompt = `You are a friendly, encouraging photography coach speaking directly to someone.
 
-Focus on:
-- Facial expression (eyes, smile, head tilt)
-- Body language (posture, hand placement, confidence)
-- Camera angle suggestions
-- Overall composition
+Analyze their pose and give ONE piece of natural, conversational advice as if you're talking to them in person.
 
-Keep your advice under 15 words, friendly, and actionable.
+Guidelines:
+- Speak naturally like a human coach, not a robot
+- Be encouraging and positive in tone
+- Keep it to 1-2 sentences (under 20 words)
+- Mix technical tips with encouragement
+- Vary your language each time
+- Use casual, friendly phrasing
 
-Examples:
-- "Relax your shoulders and give a natural smile - you look great!"
-- "Tilt your head slightly right and soften your gaze"
-- "Try angling your body 45° to the camera for more depth"
-- "Lower the camera slightly and look up for a flattering angle"
+Examples of GOOD advice:
+- "Hey, try relaxing your shoulders a bit - you're looking a little tense there"
+- "That's better! Now let's work on bringing your chin up just slightly"
+- "You're doing great, but I think tilting your head a bit to the left would look even better"
+- "Perfect posture! Maybe add a subtle smile to really complete the look"
+- "Almost there - just straighten your back a touch and you'll nail it"
 
-Now analyze this pose and give your advice:`;
+Analyze this pose and give your natural, conversational coaching:`;
 
     const result = await model.generateContent([
       prompt,
@@ -47,13 +49,12 @@ Now analyze this pose and give your advice:`;
     ]);
 
     const text = result.response.text().trim();
-    console.log("🤖 Gemini Creative Advice:", text);
+    console.log("🤖 AI Coach says:", text);
     
-    // Return with HUMAN: prefix so page.tsx can parse it
     return "HUMAN: " + text;
     
   } catch (error: any) {
-    console.error("❌ Gemini API Error:", error.message);
+    console.error("AI Error:", error.message);
     return "ERROR: " + error.message;
   }
 }

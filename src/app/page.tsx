@@ -11,18 +11,45 @@ export default function PosingCoach() {
   const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [status, setStatus] = useState("Loading AI...");
-  const [poseAdvice, setPoseAdvice] = useState<string[]>([]);
-  const [showAiAdvice, setShowAiAdvice] = useState(false);
-  const [aiAdviceText, setAiAdviceText] = useState("");
-  const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
+  const [currentAdvice, setCurrentAdvice] = useState<string>("Position yourself in frame");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   
   const animationFrameRef = useRef<number | undefined>(undefined);
+  const lastAiCallTime = useRef<number>(0);
+  const speechSynthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
 
-  // Initialize MediaPipe Pose Landmarker
+  // Speak advice with natural voice
+  const speakAdvice = (text: string) => {
+    if (!voiceEnabled || !speechSynthesis) return;
+    
+    speechSynthesis.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    
+    const voices = speechSynthesis.getVoices();
+    const naturalVoice = voices.find(voice => 
+      voice.lang.startsWith('en') && 
+      (voice.name.includes('Google') || voice.name.includes('Natural') || voice.name.includes('Enhanced'))
+    );
+    
+    if (naturalVoice) {
+      utterance.voice = naturalVoice;
+    }
+    
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    
+    speechSynthesis.speak(utterance);
+  };
+
+  // Initialize MediaPipe
   useEffect(() => {
     const initializePoseLandmarker = async () => {
       try {
-        console.log("🔄 Initializing MediaPipe...");
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
@@ -37,18 +64,22 @@ export default function PosingCoach() {
         });
         
         setPoseLandmarker(landmarker);
-        setStatus("Camera Ready");
-        console.log("✅ MediaPipe loaded successfully");
+        setStatus("Ready");
+        console.log("✅ Ready to coach!");
       } catch (err) {
-        console.error("❌ Pose Landmarker Init Error:", err);
-        setStatus("AI Load Failed");
+        console.error("❌ Error:", err);
+        setStatus("Failed to load");
       }
     };
     
     initializePoseLandmarker();
+    
+    if (speechSynthesis) {
+      speechSynthesis.getVoices();
+    }
   }, []);
 
-  // Real-time Pose Detection Loop
+  // Pose detection loop
   const detectPose = () => {
     if (!poseLandmarker || !videoRef.current || videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(detectPose);
@@ -58,32 +89,33 @@ export default function PosingCoach() {
     const startTimeMs = performance.now();
     const results = poseLandmarker.detectForVideo(videoRef.current, startTimeMs);
     
-    // Clear previous drawings
     const overlayCanvas = overlayCanvasRef.current;
     if (overlayCanvas) {
       const ctx = overlayCanvas.getContext('2d');
       if (ctx) {
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         
-        // Draw pose landmarks
         if (results.landmarks && results.landmarks[0]) {
           const drawingUtils = new DrawingUtils(ctx);
           
-          // Draw connections (skeleton)
           drawingUtils.drawLandmarks(results.landmarks[0], {
-            radius: 4,
-            color: '#0070f3',
+            radius: 5,
+            color: '#00ff88',
             fillColor: '#fff'
           });
           
           drawingUtils.drawConnectors(
             results.landmarks[0],
             PoseLandmarker.POSE_CONNECTIONS,
-            { color: '#00ff00', lineWidth: 2 }
+            { color: '#00ff88', lineWidth: 3 }
           );
           
-          // Analyze pose in real-time (FREE!)
-          analyzePoseGeometry(results.landmarks[0]);
+          // Get AI advice every 15 seconds (within free tier limit)
+          const now = Date.now();
+          if (now - lastAiCallTime.current > 15000) { // 15 seconds = 4 calls/minute
+            getAiCoaching(results.landmarks[0]);
+            lastAiCallTime.current = now;
+          }
         }
       }
     }
@@ -91,28 +123,55 @@ export default function PosingCoach() {
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // Start Camera + Detection Loop
+  // Get natural conversational AI coaching
+  const getAiCoaching = async (landmarks: any[]) => {
+    if (!videoRef.current || !canvasRef.current) return;
+    
+    try {
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      
+      canvas.width = 640;
+      canvas.height = 480;
+      context.drawImage(videoRef.current, 0, 0, 640, 480);
+      
+      const imageData = canvas.toDataURL('image/jpeg', 0.3);
+      
+      console.log("🎙️ Getting AI coaching...");
+      const response = await analyzeFrame(imageData);
+      
+      if (response.startsWith("HUMAN:")) {
+        const advice = response.replace("HUMAN:", "").trim();
+        console.log("💬 AI says:", advice);
+        setCurrentAdvice(advice);
+        speakAdvice(advice);
+      } else if (!response.includes("ERROR") && !response.includes("429")) {
+        setCurrentAdvice(response);
+        speakAdvice(response);
+      }
+    } catch (err) {
+      console.error("Coaching error:", err);
+    }
+  };
+
+  // Start camera
   useEffect(() => {
     const startCamera = async () => {
       try {
-        console.log("📷 Starting camera...");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode, width: 1280, height: 720 }
         });
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          
           videoRef.current.onloadeddata = () => {
-            console.log("✅ Video loaded, starting pose detection...");
-            if (animationFrameRef.current) {
-              cancelAnimationFrame(animationFrameRef.current);
-            }
+            console.log("📷 Camera ready");
             detectPose();
           };
         }
       } catch (err) {
-        console.error("❌ Camera Error:", err);
+        console.error("Camera error:", err);
         setStatus("Camera Error");
       }
     };
@@ -130,123 +189,6 @@ export default function PosingCoach() {
     };
   }, [facingMode, poseLandmarker]);
 
-  // FREE Local Pose Analysis
-  const analyzePoseGeometry = (landmarks: any[]) => {
-    const advice: string[] = [];
-    
-    const nose = landmarks[0];
-    const leftShoulder = landmarks[11];
-    const rightShoulder = landmarks[12];
-    const leftHip = landmarks[23];
-    const rightHip = landmarks[24];
-    
-    if (!nose || !leftShoulder || !rightShoulder) return;
-    
-    const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
-    if (shoulderDiff > 0.05) {
-      advice.push("⚠️ Level your shoulders");
-    }
-    
-    const shoulderMidpoint = (leftShoulder.y + rightShoulder.y) / 2;
-    const hipMidpoint = (leftHip.y + rightHip.y) / 2;
-    
-    if (shoulderMidpoint < hipMidpoint - 0.15) {
-      advice.push("⚠️ Straighten your back");
-    }
-    
-    const shoulderXMid = (leftShoulder.x + rightShoulder.x) / 2;
-    if (Math.abs(nose.x - shoulderXMid) > 0.1) {
-      advice.push("⚠️ Center your head");
-    }
-    
-    if (nose.y > shoulderMidpoint - 0.15) {
-      advice.push("💡 Lift your chin slightly");
-    }
-    
-    if (advice.length === 0) {
-      advice.push("✓ Great pose!");
-    }
-    
-    setPoseAdvice(advice);
-    setStatus(advice[0]);
-  };
-
-  // Get AI Creative Advice - WITH EXTRA LOGGING
-  const getAiAdvice = async () => {
-    console.log("🔵 Button clicked!");
-    
-    if (!videoRef.current) {
-      console.error("❌ Video ref is null");
-      alert("Video not ready");
-      return;
-    }
-    
-    if (videoRef.current.readyState < 2) {
-      console.error("❌ Video not ready, readyState:", videoRef.current.readyState);
-      alert("Video not loaded yet");
-      return;
-    }
-    
-    console.log("✅ Video is ready");
-    setIsLoadingAdvice(true);
-    setStatus("Getting AI advice...");
-    
-    try {
-      const canvas = canvasRef.current;
-      if (!canvas) {
-        throw new Error("Canvas ref is null");
-      }
-      
-      const context = canvas.getContext('2d');
-      if (!context) {
-        throw new Error("Cannot get canvas context");
-      }
-      
-      console.log("📸 Capturing frame...");
-      canvas.width = 640;
-      canvas.height = 480;
-      context.drawImage(videoRef.current, 0, 0, 640, 480);
-      
-      const imageData = canvas.toDataURL('image/jpeg', 0.3);
-      console.log("📦 Image data length:", imageData.length);
-      console.log("🚀 Calling analyzeFrame...");
-      
-      const response = await analyzeFrame(imageData);
-      console.log("📥 Response received:", response);
-      
-      if (response.startsWith("HUMAN:")) {
-        const tip = response.replace("HUMAN:", "").trim();
-        console.log("✅ Got advice:", tip);
-        setAiAdviceText(tip);
-        setShowAiAdvice(true);
-        setTimeout(() => setShowAiAdvice(false), 5000);
-        setStatus("Camera Ready");
-      } else if (response.startsWith("ERROR:")) {
-        console.error("❌ API Error:", response);
-        alert("Error: " + response);
-        setStatus("API Error");
-      } else {
-        console.log("⚠️ Unexpected response format:", response);
-        setAiAdviceText(response);
-        setShowAiAdvice(true);
-        setTimeout(() => setShowAiAdvice(false), 5000);
-        setStatus("Camera Ready");
-      }
-    } catch (err) {
-      console.error("❌ getAiAdvice Error:", err);
-      alert("Error: " + (err as Error).message);
-      setStatus("Error");
-    } finally {
-      setIsLoadingAdvice(false);
-    }
-  };
-
-  // Test button that just console logs
-  const testButton = () => {
-    console.log("🧪 TEST BUTTON CLICKED!");
-    alert("Test button works!");
-  };
-
   return (
     <main style={{
       background: '#000',
@@ -257,30 +199,6 @@ export default function PosingCoach() {
       justifyContent: 'center',
       padding: '20px'
     }}>
-      
-      {/* AI Advice Toast */}
-      {showAiAdvice && (
-        <div style={{
-          position: 'fixed',
-          top: 20,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 100,
-          background: '#fff',
-          padding: '15px 25px',
-          borderRadius: '15px',
-          boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-          borderLeft: '5px solid #0070f3',
-          maxWidth: '90%'
-        }}>
-          <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 'bold', color: '#0070f3' }}>
-            🤖 AI CREATIVE ADVICE
-          </p>
-          <p style={{ margin: '5px 0 0', fontSize: '0.9rem', color: '#000' }}>
-            {aiAdviceText}
-          </p>
-        </div>
-      )}
       
       {/* Status Bar */}
       <div style={{
@@ -293,12 +211,38 @@ export default function PosingCoach() {
         color: '#fff',
         fontSize: '0.75rem',
         zIndex: 50,
-        backdropFilter: 'blur(10px)'
+        backdropFilter: 'blur(10px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
       }}>
+        {isSpeaking && <span style={{ fontSize: '16px' }}>🔊</span>}
         {status}
       </div>
       
-      {/* Camera View with Overlay */}
+      {/* Voice Toggle */}
+      <button
+        onClick={() => setVoiceEnabled(!voiceEnabled)}
+        style={{
+          position: 'fixed',
+          top: 15,
+          left: 15,
+          background: voiceEnabled ? '#0070f3' : 'rgba(255,255,255,0.1)',
+          color: '#fff',
+          border: '1px solid rgba(255,255,255,0.2)',
+          padding: '8px 15px',
+          borderRadius: '20px',
+          fontSize: '0.75rem',
+          cursor: 'pointer',
+          zIndex: 50,
+          backdropFilter: 'blur(10px)',
+          fontWeight: 'bold'
+        }}
+      >
+        {voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF'}
+      </button>
+      
+      {/* Camera View */}
       <div style={{
         position: 'relative',
         width: '85%',
@@ -321,7 +265,6 @@ export default function PosingCoach() {
           }}
         />
         
-        {/* Pose Overlay Canvas */}
         <canvas
           ref={overlayCanvasRef}
           width={1280}
@@ -338,12 +281,9 @@ export default function PosingCoach() {
         
         <canvas ref={canvasRef} style={{ display: 'none' }} />
         
-        {/* Flip Camera Button */}
+        {/* Flip Camera */}
         <button
-          onClick={() => {
-            console.log("🔄 Flip button clicked");
-            setFacingMode(prev => prev === "user" ? "environment" : "user");
-          }}
+          onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
           style={{
             position: 'absolute',
             top: 15,
@@ -361,86 +301,39 @@ export default function PosingCoach() {
         >
           🔄
         </button>
-        
-        {/* TEST BUTTON - Simple alert */}
-        <button
-          onClick={testButton}
-          style={{
-            position: 'absolute',
-            bottom: 80,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: '#ff0000',
-            color: '#fff',
-            border: 'none',
-            padding: '10px 20px',
-            borderRadius: '15px',
-            fontSize: '0.8rem',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            zIndex: 10
-          }}
-        >
-          🧪 TEST
-        </button>
-        
-        {/* AI Advice Button */}
-        <button
-          onClick={getAiAdvice}
-          disabled={isLoadingAdvice}
-          style={{
-            position: 'absolute',
-            bottom: 15,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: isLoadingAdvice ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: '#fff',
-            border: 'none',
-            padding: '12px 25px',
-            borderRadius: '25px',
-            fontSize: '0.85rem',
-            fontWeight: 'bold',
-            cursor: isLoadingAdvice ? 'not-allowed' : 'pointer',
-            boxShadow: '0 4px 15px rgba(102,126,234,0.4)',
-            zIndex: 10,
-            opacity: isLoadingAdvice ? 0.6 : 1
-          }}
-        >
-          {isLoadingAdvice ? '⏳ Loading...' : '🎨 Get AI Advice'}
-        </button>
       </div>
       
-      {/* Real-time Feedback Panel */}
+      {/* Live Coaching Display */}
       <div style={{
         marginTop: '20px',
         width: '85%',
         maxWidth: '500px',
         background: 'rgba(20,20,20,0.9)',
-        padding: '15px 20px',
+        padding: '20px',
         borderRadius: '20px',
-        border: '1px solid rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(10px)'
+        border: '2px solid rgba(0,255,136,0.3)',
+        backdropFilter: 'blur(10px)',
+        textAlign: 'center'
       }}>
         <p style={{
           margin: 0,
-          fontSize: '0.65rem',
-          color: '#888',
+          fontSize: '0.7rem',
+          color: '#00ff88',
           fontWeight: 'bold',
-          letterSpacing: '1px',
-          marginBottom: '10px'
+          letterSpacing: '2px',
+          marginBottom: '12px'
         }}>
-          📊 REAL-TIME ANALYSIS (FREE)
+          🎙️ AI COACH
         </p>
-        {poseAdvice.map((advice, i) => (
-          <p key={i} style={{
-            margin: '5px 0',
-            fontSize: '0.85rem',
-            color: advice.includes('✓') ? '#0f0' : '#fff',
-            lineHeight: '1.4'
-          }}>
-            {advice}
-          </p>
-        ))}
+        <p style={{
+          margin: 0,
+          fontSize: '1rem',
+          color: '#fff',
+          lineHeight: '1.5',
+          fontStyle: 'italic'
+        }}>
+          "{currentAdvice}"
+        </p>
       </div>
       
       <p style={{
@@ -449,7 +342,7 @@ export default function PosingCoach() {
         letterSpacing: '2px',
         marginTop: '15px'
       }}>
-        APERTURE AI • FREE MODE
+        APERTURE AI • VOICE COACH
       </p>
     </main>
   );
