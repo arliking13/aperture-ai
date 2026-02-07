@@ -6,7 +6,7 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
       console.error("No API Key found");
-      return "EMPTY";
+      return "ERROR: No API Key";
     }
 
     const genAI = new GoogleGenerativeAI(key);
@@ -22,12 +22,25 @@ export async function analyzeFrame(base64Image: string): Promise<string> {
     
     const base64Data = base64Image.split(",")[1];
     
-    const prompt = `You are analyzing a camera frame for a posing coach app.
-    
-If you see a person/human figure: Give ONE short tip under 12 words (example: "Tilt head slightly left").
-If frame is empty or just objects: Reply with exactly "EMPTY"
+    // NEW DETECTION + DESCRIPTION PROMPT
+    const prompt = `You are a vision AI analyzing a camera frame.
 
-Be helpful. Focus on pose geometry only.`;
+TASK:
+1. First, tell me what you see in the frame
+2. Then give instructions based on what you see
+
+RESPONSE FORMAT:
+- If you see a HUMAN/PERSON: "HUMAN: [one short posing tip under 12 words]"
+- If you see OBJECTS ONLY (bottle, mouse, desk, etc): "OBJECT: [name the main object you see]"
+- If frame is EMPTY/BLURRY: "EMPTY"
+
+Examples:
+- "HUMAN: Tilt your chin up slightly for better angle"
+- "OBJECT: Water bottle on desk"
+- "OBJECT: Computer mouse"
+- "EMPTY"
+
+Be honest about what you actually see.`;
 
     const result = await model.generateContent([
       prompt,
@@ -36,12 +49,12 @@ Be helpful. Focus on pose geometry only.`;
 
     const text = result.response.text().trim();
     
-    console.log("AI Response:", text); // This will show in Vercel Logs
+    console.log("🤖 AI Raw Response:", text); // This appears in Vercel Logs
     
     return text;
     
   } catch (error: any) {
     console.error("AI Action Error:", error.message);
-    return "EMPTY";
+    return "ERROR: " + error.message;
   }
 }

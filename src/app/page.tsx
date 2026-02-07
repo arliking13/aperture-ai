@@ -9,6 +9,7 @@ export default function PosingCoach() {
   const [advice, setAdvice] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [status, setStatus] = useState("Initializing...");
+  const [debugInfo, setDebugInfo] = useState("Waiting..."); // NEW: Shows what AI sees
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
 
   const startCamera = useCallback(async () => {
@@ -51,29 +52,36 @@ export default function PosingCoach() {
           context?.drawImage(videoRef.current, 0, 0, 640, 480);
           
           const imageData = canvas.toDataURL('image/jpeg', 0.3);
-          
-          // AI returns a string: either "EMPTY" or the coaching tip
           const aiResponse = await analyzeFrame(imageData);
           
-          console.log("AI says:", aiResponse); // Debug
+          console.log("📸 AI Response:", aiResponse);
+          setDebugInfo(aiResponse); // Show raw response
           
-          // Check if response is "EMPTY" or too short
-          if (aiResponse === "EMPTY" || aiResponse.length < 5) {
-            setStatus("Ready for Pose...");
-            setShowToast(false);
-          } else {
-            // Human detected - show the tip
+          // Parse AI response
+          if (aiResponse.startsWith("HUMAN:")) {
+            // Human detected - extract the tip
+            const tip = aiResponse.replace("HUMAN:", "").trim();
             setStatus("Human Detected!");
-            setAdvice(aiResponse);
+            setAdvice(tip);
             setShowToast(true);
             setTimeout(() => {
               setShowToast(false);
               setStatus("Ready for Pose...");
             }, 5000);
+          } else if (aiResponse.startsWith("OBJECT:")) {
+            // Object detected - show what it is
+            const objectName = aiResponse.replace("OBJECT:", "").trim();
+            setStatus(`Detected: ${objectName}`);
+            setShowToast(false);
+          } else {
+            // Empty or error
+            setStatus("Ready for Pose...");
+            setShowToast(false);
           }
         } catch (err) {
           console.error("Loop Error:", err);
           setStatus("AI Error");
+          setDebugInfo("Error: " + (err as Error).message);
         }
       }
     }, 4000);
@@ -110,11 +118,27 @@ export default function PosingCoach() {
         <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
       </div>
 
+      {/* DEBUG PANEL - Shows what AI actually sees */}
+      <div style={{
+        position: 'absolute',
+        top: 15,
+        left: 15,
+        background: 'rgba(0,0,0,0.7)',
+        padding: '10px 15px',
+        borderRadius: '12px',
+        maxWidth: '250px',
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(255,255,255,0.1)'
+      }}>
+        <p style={{ margin: 0, fontSize: '0.65rem', color: '#888', fontWeight: 'bold' }}>AI VISION DEBUG</p>
+        <p style={{ margin: '5px 0 0', fontSize: '0.75rem', color: '#fff', lineHeight: '1.3' }}>{debugInfo}</p>
+      </div>
+
       {/* COACHING NOTIFICATION */}
       {showToast && advice && (
         <div style={{
           position: 'absolute', 
-          top: 40, 
+          top: 90, 
           left: '50%', 
           transform: 'translateX(-50%)',
           width: '90%', 
@@ -126,7 +150,8 @@ export default function PosingCoach() {
           zIndex: 100,
           borderLeft: '8px solid #0070f3'
         }}>
-          <p style={{ margin: 0, fontSize: '1rem', color: '#000', lineHeight: '1.4' }}>{advice}</p>
+          <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 'bold', color: '#0070f3' }}>POSE COACH</p>
+          <p style={{ margin: '5px 0 0', fontSize: '1rem', color: '#000', lineHeight: '1.4' }}>{advice}</p>
         </div>
       )}
 
@@ -177,7 +202,7 @@ export default function PosingCoach() {
           <span style={{ fontSize: '24px' }}>🔄</span>
         </button>
 
-        {/* RULE OF THIRDS GRID */}
+        {/* GRID */}
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <div style={{ position: 'absolute', top: '33%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
           <div style={{ position: 'absolute', top: '66%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
