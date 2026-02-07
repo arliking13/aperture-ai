@@ -14,6 +14,7 @@ export default function PosingCoach() {
   const [poseAdvice, setPoseAdvice] = useState<string[]>([]);
   const [showAiAdvice, setShowAiAdvice] = useState(false);
   const [aiAdviceText, setAiAdviceText] = useState("");
+  const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
   
   const animationFrameRef = useRef<number | undefined>(undefined);
 
@@ -21,6 +22,7 @@ export default function PosingCoach() {
   useEffect(() => {
     const initializePoseLandmarker = async () => {
       try {
+        console.log("🔄 Initializing MediaPipe...");
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
@@ -36,8 +38,9 @@ export default function PosingCoach() {
         
         setPoseLandmarker(landmarker);
         setStatus("Camera Ready");
+        console.log("✅ MediaPipe loaded successfully");
       } catch (err) {
-        console.error("Pose Landmarker Init Error:", err);
+        console.error("❌ Pose Landmarker Init Error:", err);
         setStatus("AI Load Failed");
       }
     };
@@ -92,6 +95,7 @@ export default function PosingCoach() {
   useEffect(() => {
     const startCamera = async () => {
       try {
+        console.log("📷 Starting camera...");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode, width: 1280, height: 720 }
         });
@@ -99,7 +103,6 @@ export default function PosingCoach() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           
-          // ✅ FIX: Start detection loop immediately after video loads
           videoRef.current.onloadeddata = () => {
             console.log("✅ Video loaded, starting pose detection...");
             if (animationFrameRef.current) {
@@ -109,7 +112,7 @@ export default function PosingCoach() {
           };
         }
       } catch (err) {
-        console.error("Camera Error:", err);
+        console.error("❌ Camera Error:", err);
         setStatus("Camera Error");
       }
     };
@@ -117,7 +120,6 @@ export default function PosingCoach() {
     startCamera();
     
     return () => {
-      // Cleanup
       if (videoRef.current?.srcObject) {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
         tracks.forEach(track => track.stop());
@@ -126,13 +128,12 @@ export default function PosingCoach() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [facingMode, poseLandmarker]); // ✅ FIX: Added poseLandmarker dependency
+  }, [facingMode, poseLandmarker]);
 
   // FREE Local Pose Analysis
   const analyzePoseGeometry = (landmarks: any[]) => {
     const advice: string[] = [];
     
-    // Get key landmarks
     const nose = landmarks[0];
     const leftShoulder = landmarks[11];
     const rightShoulder = landmarks[12];
@@ -141,13 +142,11 @@ export default function PosingCoach() {
     
     if (!nose || !leftShoulder || !rightShoulder) return;
     
-    // Check shoulder alignment
     const shoulderDiff = Math.abs(leftShoulder.y - rightShoulder.y);
     if (shoulderDiff > 0.05) {
       advice.push("⚠️ Level your shoulders");
     }
     
-    // Check posture (shoulders should be behind hips)
     const shoulderMidpoint = (leftShoulder.y + rightShoulder.y) / 2;
     const hipMidpoint = (leftHip.y + rightHip.y) / 2;
     
@@ -155,18 +154,15 @@ export default function PosingCoach() {
       advice.push("⚠️ Straighten your back");
     }
     
-    // Check head position
     const shoulderXMid = (leftShoulder.x + rightShoulder.x) / 2;
     if (Math.abs(nose.x - shoulderXMid) > 0.1) {
       advice.push("⚠️ Center your head");
     }
     
-    // Check chin angle
     if (nose.y > shoulderMidpoint - 0.15) {
       advice.push("💡 Lift your chin slightly");
     }
     
-    // All good!
     if (advice.length === 0) {
       advice.push("✓ Great pose!");
     }
@@ -175,30 +171,80 @@ export default function PosingCoach() {
     setStatus(advice[0]);
   };
 
-  // Optional: Get AI Creative Advice (only when button pressed)
+  // Get AI Creative Advice - WITH EXTRA LOGGING
   const getAiAdvice = async () => {
-    if (!videoRef.current || videoRef.current.readyState < 2) return;
+    console.log("🔵 Button clicked!");
     
+    if (!videoRef.current) {
+      console.error("❌ Video ref is null");
+      alert("Video not ready");
+      return;
+    }
+    
+    if (videoRef.current.readyState < 2) {
+      console.error("❌ Video not ready, readyState:", videoRef.current.readyState);
+      alert("Video not loaded yet");
+      return;
+    }
+    
+    console.log("✅ Video is ready");
+    setIsLoadingAdvice(true);
     setStatus("Getting AI advice...");
     
-    const canvas = canvasRef.current!;
-    const context = canvas.getContext('2d');
-    if (context) {
+    try {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        throw new Error("Canvas ref is null");
+      }
+      
+      const context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error("Cannot get canvas context");
+      }
+      
+      console.log("📸 Capturing frame...");
       canvas.width = 640;
       canvas.height = 480;
       context.drawImage(videoRef.current, 0, 0, 640, 480);
       
       const imageData = canvas.toDataURL('image/jpeg', 0.3);
+      console.log("📦 Image data length:", imageData.length);
+      console.log("🚀 Calling analyzeFrame...");
+      
       const response = await analyzeFrame(imageData);
+      console.log("📥 Response received:", response);
       
       if (response.startsWith("HUMAN:")) {
-        setAiAdviceText(response.replace("HUMAN:", "").trim());
+        const tip = response.replace("HUMAN:", "").trim();
+        console.log("✅ Got advice:", tip);
+        setAiAdviceText(tip);
         setShowAiAdvice(true);
         setTimeout(() => setShowAiAdvice(false), 5000);
+        setStatus("Camera Ready");
+      } else if (response.startsWith("ERROR:")) {
+        console.error("❌ API Error:", response);
+        alert("Error: " + response);
+        setStatus("API Error");
+      } else {
+        console.log("⚠️ Unexpected response format:", response);
+        setAiAdviceText(response);
+        setShowAiAdvice(true);
+        setTimeout(() => setShowAiAdvice(false), 5000);
+        setStatus("Camera Ready");
       }
+    } catch (err) {
+      console.error("❌ getAiAdvice Error:", err);
+      alert("Error: " + (err as Error).message);
+      setStatus("Error");
+    } finally {
+      setIsLoadingAdvice(false);
     }
-    
-    setStatus("Camera Ready");
+  };
+
+  // Test button that just console logs
+  const testButton = () => {
+    console.log("🧪 TEST BUTTON CLICKED!");
+    alert("Test button works!");
   };
 
   return (
@@ -294,7 +340,10 @@ export default function PosingCoach() {
         
         {/* Flip Camera Button */}
         <button
-          onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
+          onClick={() => {
+            console.log("🔄 Flip button clicked");
+            setFacingMode(prev => prev === "user" ? "environment" : "user");
+          }}
           style={{
             position: 'absolute',
             top: 15,
@@ -313,27 +362,51 @@ export default function PosingCoach() {
           🔄
         </button>
         
+        {/* TEST BUTTON - Simple alert */}
+        <button
+          onClick={testButton}
+          style={{
+            position: 'absolute',
+            bottom: 80,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#ff0000',
+            color: '#fff',
+            border: 'none',
+            padding: '10px 20px',
+            borderRadius: '15px',
+            fontSize: '0.8rem',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            zIndex: 10
+          }}
+        >
+          🧪 TEST
+        </button>
+        
         {/* AI Advice Button */}
         <button
           onClick={getAiAdvice}
+          disabled={isLoadingAdvice}
           style={{
             position: 'absolute',
             bottom: 15,
             left: '50%',
             transform: 'translateX(-50%)',
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            background: isLoadingAdvice ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: '#fff',
             border: 'none',
             padding: '12px 25px',
             borderRadius: '25px',
             fontSize: '0.85rem',
             fontWeight: 'bold',
-            cursor: 'pointer',
+            cursor: isLoadingAdvice ? 'not-allowed' : 'pointer',
             boxShadow: '0 4px 15px rgba(102,126,234,0.4)',
-            zIndex: 10
+            zIndex: 10,
+            opacity: isLoadingAdvice ? 0.6 : 1
           }}
         >
-          🎨 Get AI Advice
+          {isLoadingAdvice ? '⏳ Loading...' : '🎨 Get AI Advice'}
         </button>
       </div>
       
