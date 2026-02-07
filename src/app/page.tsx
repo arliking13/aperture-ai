@@ -15,7 +15,7 @@ export default function PosingCoach() {
   const [showAiAdvice, setShowAiAdvice] = useState(false);
   const [aiAdviceText, setAiAdviceText] = useState("");
   
-  const animationFrameRef = useRef<number | undefined>(undefined);  // ✅ FIXED: Added undefined type and initial value
+  const animationFrameRef = useRef<number | undefined>(undefined);
 
   // Initialize MediaPipe Pose Landmarker
   useEffect(() => {
@@ -45,39 +45,8 @@ export default function PosingCoach() {
     initializePoseLandmarker();
   }, []);
 
-  // Start Camera
-  useEffect(() => {
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode, width: 1280, height: 720 }
-        });
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.addEventListener('loadeddata', detectPose);
-        }
-      } catch (err) {
-        console.error("Camera Error:", err);
-        setStatus("Camera Error");
-      }
-    };
-    
-    startCamera();
-    
-    return () => {
-      if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [facingMode]);
-
   // Real-time Pose Detection Loop
-  const detectPose = async () => {
+  const detectPose = () => {
     if (!poseLandmarker || !videoRef.current || videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(detectPose);
       return;
@@ -118,6 +87,46 @@ export default function PosingCoach() {
     
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
+
+  // Start Camera + Detection Loop
+  useEffect(() => {
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width: 1280, height: 720 }
+        });
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          
+          // ✅ FIX: Start detection loop immediately after video loads
+          videoRef.current.onloadeddata = () => {
+            console.log("✅ Video loaded, starting pose detection...");
+            if (animationFrameRef.current) {
+              cancelAnimationFrame(animationFrameRef.current);
+            }
+            detectPose();
+          };
+        }
+      } catch (err) {
+        console.error("Camera Error:", err);
+        setStatus("Camera Error");
+      }
+    };
+    
+    startCamera();
+    
+    return () => {
+      // Cleanup
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach(track => track.stop());
+      }
+      if (animationFrameRef.current !== undefined) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [facingMode, poseLandmarker]); // ✅ FIX: Added poseLandmarker dependency
 
   // FREE Local Pose Analysis
   const analyzePoseGeometry = (landmarks: any[]) => {
@@ -174,17 +183,19 @@ export default function PosingCoach() {
     
     const canvas = canvasRef.current!;
     const context = canvas.getContext('2d');
-    canvas.width = 640;
-    canvas.height = 480;
-    context?.drawImage(videoRef.current, 0, 0, 640, 480);
-    
-    const imageData = canvas.toDataURL('image/jpeg', 0.3);
-    const response = await analyzeFrame(imageData);
-    
-    if (response.startsWith("HUMAN:")) {
-      setAiAdviceText(response.replace("HUMAN:", "").trim());
-      setShowAiAdvice(true);
-      setTimeout(() => setShowAiAdvice(false), 5000);
+    if (context) {
+      canvas.width = 640;
+      canvas.height = 480;
+      context.drawImage(videoRef.current, 0, 0, 640, 480);
+      
+      const imageData = canvas.toDataURL('image/jpeg', 0.3);
+      const response = await analyzeFrame(imageData);
+      
+      if (response.startsWith("HUMAN:")) {
+        setAiAdviceText(response.replace("HUMAN:", "").trim());
+        setShowAiAdvice(true);
+        setTimeout(() => setShowAiAdvice(false), 5000);
+      }
     }
     
     setStatus("Camera Ready");
