@@ -1,41 +1,46 @@
 "use client";
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { analyzeFrame } from './actions';
 
-export default function PhotoCoach() {
+export default function PosingCoach() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [advice, setAdvice] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
-  const [status, setStatus] = useState("Initializing..."); // Diagnostic status
+  const [status, setStatus] = useState("Initializing...");
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
+
+  // 1. Logic to start/switch cameras while cleaning up old tracks
+  const startCamera = useCallback(async () => {
+    try {
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach(track => track.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 } } 
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setStatus(facingMode === "user" ? "Front Camera" : "Back Camera");
+      }
+    } catch (err) {
+      setStatus("Camera Error: " + (err as Error).message);
+    }
+  }, [facingMode]);
 
   useEffect(() => {
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } 
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          setStatus("Camera Live");
-        }
-      } catch (err) {
-        setStatus("Camera Error: " + (err as Error).message);
-      }
-    }
     startCamera();
 
     const interval = setInterval(async () => {
-      // 1. Check if video is READY and has valid dimensions
       if (videoRef.current && videoRef.current.readyState >= 2) {
         setStatus("Analyzing Frame...");
-        
         const canvas = canvasRef.current!;
         const context = canvas.getContext('2d');
         canvas.width = 320;
         canvas.height = 240;
-        
-        // 2. Capture and verify frame
         context?.drawImage(videoRef.current, 0, 0, 320, 240);
         const imageData = canvas.toDataURL('image/jpeg', 0.1);
         
@@ -46,8 +51,6 @@ export default function PhotoCoach() {
             setShowToast(true);
             setStatus("Success!");
             setTimeout(() => setShowToast(false), 5000);
-          } else {
-            setStatus("AI returned empty.");
           }
         } catch (e) {
           setStatus("AI Loop Error.");
@@ -56,18 +59,18 @@ export default function PhotoCoach() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [startCamera]);
 
   return (
     <main style={{ background: '#000', height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
       
-      {/* 1. STATUS BAR (Diagnostic) */}
+      {/* STATUS BAR (Kept exactly as you liked) */}
       <div style={{ position: 'absolute', top: 15, right: 15, display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.includes("Error") ? 'red' : '#0f0' }} />
         <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
       </div>
 
-      {/* 2. NOTIFICATION TOAST */}
+      {/* NOTIFICATION TOAST (Kept exactly as you liked) */}
       {showToast && advice && (
         <div style={{
           position: 'absolute', top: 40, left: '50%', transform: 'translateX(-50%)',
@@ -79,15 +82,39 @@ export default function PhotoCoach() {
         </div>
       )}
 
-      {/* 3. FIXED VIEWFINDER */}
+      {/* FIXED VIEWFINDER (With Flip Button added) */}
       <div style={{ width: '85%', maxWidth: '360px', aspectRatio: '3/4', position: 'relative', borderRadius: '40px', overflow: 'hidden', border: '2px solid #222' }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          style={{ 
+            width: '100%', height: '100%', objectFit: 'cover',
+            transform: facingMode === "user" ? 'scaleX(-1)' : 'none' // Mirror the front camera
+          }} 
+        />
         <canvas ref={canvasRef} style={{ display: 'none' }} />
+        
+        {/* FLIP CAMERA BUTTON */}
+        <button 
+          onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
+          style={{
+            position: 'absolute', bottom: 20, right: 20, width: '50px', height: '50px',
+            background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+            display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(10px)',
+            cursor: 'pointer', zIndex: 10
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>🔄</span>
+        </button>
+
+        {/* Viewfinder Grid */}
         <div style={{ position: 'absolute', inset: 0, border: '1px solid rgba(255,255,255,0.1)', pointerEvents: 'none' }}>
-           <div style={{ position: 'absolute', top: '33%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
-           <div style={{ position: 'absolute', top: '66%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
-           <div style={{ position: 'absolute', left: '33%', height: '100%', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
-           <div style={{ position: 'absolute', left: '66%', height: '100%', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
+            <div style={{ position: 'absolute', top: '33%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
+            <div style={{ position: 'absolute', top: '66%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
+            <div style={{ position: 'absolute', left: '33%', height: '100%', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
+            <div style={{ position: 'absolute', left: '66%', height: '100%', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
         </div>
       </div>
 
