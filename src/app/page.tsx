@@ -9,7 +9,7 @@ export default function PosingCoach() {
   const [advice, setAdvice] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [status, setStatus] = useState("Initializing...");
-  const [debugInfo, setDebugInfo] = useState("Waiting..."); // NEW: Shows what AI sees
+  const [debugInfo, setDebugInfo] = useState("Waiting for first frame...");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
 
   const startCamera = useCallback(async () => {
@@ -55,11 +55,9 @@ export default function PosingCoach() {
           const aiResponse = await analyzeFrame(imageData);
           
           console.log("📸 AI Response:", aiResponse);
-          setDebugInfo(aiResponse); // Show raw response
+          setDebugInfo(aiResponse);
           
-          // Parse AI response
           if (aiResponse.startsWith("HUMAN:")) {
-            // Human detected - extract the tip
             const tip = aiResponse.replace("HUMAN:", "").trim();
             setStatus("Human Detected!");
             setAdvice(tip);
@@ -69,12 +67,10 @@ export default function PosingCoach() {
               setStatus("Ready for Pose...");
             }, 5000);
           } else if (aiResponse.startsWith("OBJECT:")) {
-            // Object detected - show what it is
             const objectName = aiResponse.replace("OBJECT:", "").trim();
             setStatus(`Detected: ${objectName}`);
             setShowToast(false);
           } else {
-            // Empty or error
             setStatus("Ready for Pose...");
             setShowToast(false);
           }
@@ -96,66 +92,52 @@ export default function PosingCoach() {
       display: 'flex', 
       flexDirection: 'column', 
       alignItems: 'center', 
-      justifyContent: 'center' 
+      justifyContent: 'space-between',
+      padding: '20px 0'
     }}>
       
-      {/* STATUS INDICATOR */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 15, 
-        right: 15, 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '8px' 
-      }}>
+      {/* TOP SECTION: Status + Notification */}
+      <div style={{ width: '100%', position: 'relative', flex: '0 0 auto' }}>
+        {/* STATUS INDICATOR */}
         <div style={{ 
-          width: '8px', 
-          height: '8px', 
-          borderRadius: '50%', 
-          background: status === "Human Detected!" ? '#0f0' : (status.includes("Error") ? 'red' : '#666'),
-          transition: 'background 0.3s'
-        }} />
-        <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
-      </div>
-
-      {/* DEBUG PANEL - Shows what AI actually sees */}
-      <div style={{
-        position: 'absolute',
-        top: 15,
-        left: 15,
-        background: 'rgba(0,0,0,0.7)',
-        padding: '10px 15px',
-        borderRadius: '12px',
-        maxWidth: '250px',
-        backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.1)'
-      }}>
-        <p style={{ margin: 0, fontSize: '0.65rem', color: '#888', fontWeight: 'bold' }}>AI VISION DEBUG</p>
-        <p style={{ margin: '5px 0 0', fontSize: '0.75rem', color: '#fff', lineHeight: '1.3' }}>{debugInfo}</p>
-      </div>
-
-      {/* COACHING NOTIFICATION */}
-      {showToast && advice && (
-        <div style={{
           position: 'absolute', 
-          top: 90, 
-          left: '50%', 
-          transform: 'translateX(-50%)',
-          width: '90%', 
-          maxWidth: '380px', 
-          background: '#fff', 
-          padding: '20px',
-          borderRadius: '24px', 
-          boxShadow: '0 15px 40px rgba(0,0,0,0.8)', 
-          zIndex: 100,
-          borderLeft: '8px solid #0070f3'
+          top: 0, 
+          right: 15, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '8px',
+          zIndex: 50
         }}>
-          <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 'bold', color: '#0070f3' }}>POSE COACH</p>
-          <p style={{ margin: '5px 0 0', fontSize: '1rem', color: '#000', lineHeight: '1.4' }}>{advice}</p>
+          <div style={{ 
+            width: '8px', 
+            height: '8px', 
+            borderRadius: '50%', 
+            background: status === "Human Detected!" ? '#0f0' : (status.includes("Error") ? 'red' : '#666'),
+            transition: 'background 0.3s'
+          }} />
+          <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
         </div>
-      )}
 
-      {/* CAMERA VIEWFINDER */}
+        {/* COACHING NOTIFICATION */}
+        {showToast && advice && (
+          <div style={{
+            margin: '0 auto',
+            marginTop: '10px',
+            width: '90%', 
+            maxWidth: '380px', 
+            background: '#fff', 
+            padding: '18px',
+            borderRadius: '20px', 
+            boxShadow: '0 10px 30px rgba(0,0,0,0.6)', 
+            borderLeft: '6px solid #0070f3'
+          }}>
+            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 'bold', color: '#0070f3' }}>POSE COACH</p>
+            <p style={{ margin: '5px 0 0', fontSize: '0.95rem', color: '#000', lineHeight: '1.3' }}>{advice}</p>
+          </div>
+        )}
+      </div>
+
+      {/* MIDDLE SECTION: Camera Viewfinder */}
       <div style={{ 
         width: '85%', 
         maxWidth: '360px', 
@@ -163,7 +145,8 @@ export default function PosingCoach() {
         position: 'relative', 
         borderRadius: '40px', 
         overflow: 'hidden', 
-        border: '2px solid #222' 
+        border: '2px solid #222',
+        flex: '0 0 auto'
       }}>
         <video 
           ref={videoRef} 
@@ -211,8 +194,54 @@ export default function PosingCoach() {
         </div>
       </div>
 
-      <p style={{ marginTop: '30px', color: '#444', fontSize: '0.7rem', letterSpacing: '2px' }}>
-        APERTURE AI • POSE COACH
+      {/* BOTTOM SECTION: Debug Panel */}
+      <div style={{ 
+        width: '90%', 
+        maxWidth: '380px',
+        background: 'rgba(20,20,20,0.95)',
+        padding: '15px 20px',
+        borderRadius: '20px',
+        border: '1px solid rgba(255,255,255,0.1)',
+        backdropFilter: 'blur(10px)',
+        height: '80px', // Fixed height
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        flex: '0 0 auto'
+      }}>
+        <p style={{ 
+          margin: 0, 
+          fontSize: '0.65rem', 
+          color: '#888', 
+          fontWeight: 'bold',
+          letterSpacing: '1px'
+        }}>
+          🤖 AI VISION DEBUG
+        </p>
+        <p style={{ 
+          margin: '8px 0 0', 
+          fontSize: '0.8rem', 
+          color: '#fff', 
+          lineHeight: '1.3',
+          wordBreak: 'break-word',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical'
+        }}>
+          {debugInfo}
+        </p>
+      </div>
+
+      {/* BRANDING (optional - remove if too crowded) */}
+      <p style={{ 
+        color: '#333', 
+        fontSize: '0.6rem', 
+        letterSpacing: '2px',
+        margin: '10px 0 0'
+      }}>
+        APERTURE AI
       </p>
     </main>
   );
