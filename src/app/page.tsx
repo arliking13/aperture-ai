@@ -18,11 +18,9 @@ export default function PosingCoach() {
   const [testMode, setTestMode] = useState(false);
   const [testImage, setTestImage] = useState<string | null>(null);
   
-  // NEW: Rate limiting and caching
-  const [isRateLimited, setIsRateLimited] = useState(false);
-  const [retryAfter, setRetryAfter] = useState(0);
-  const [lastResponse, setLastResponse] = useState<string | null>(null);
-  const [sameResponseCount, setSameResponseCount] = useState(0);
+  // Rate limiting
+  const lastRequestTime = useRef<number>(0);
+  const MIN_REQUEST_INTERVAL = 12000; // 12 seconds between requests
 
   const startCamera = useCallback(async () => {
     try {
@@ -49,17 +47,29 @@ export default function PosingCoach() {
     }
   }, [facingMode]);
 
+  // Separate effect for camera initialization (only runs when facingMode changes)
   useEffect(() => {
     startCamera();
+    
+    // Cleanup only when component unmounts or facingMode changes
+    return () => {
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach(track => track.stop());
+      }
+    };
+  }, [facingMode]);
 
+  // Separate effect for AI analysis loop
+  useEffect(() => {
     const interval = setInterval(async () => {
-      // Check if we're rate limited
-      if (isRateLimited && retryAfter > 0) {
-        setStatus(`Rate limited (${retryAfter}s)`);
-        setRetryAfter(prev => Math.max(0, prev - 1));
-        if (retryAfter <= 1) {
-          setIsRateLimited(false);
-        }
+      // Check if enough time has passed since last request
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastRequestTime.current;
+      
+      if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+        const waitTime = Math.ceil((MIN_REQUEST_INTERVAL - timeSinceLastRequest) / 1000);
+        setStatus(`Waiting ${waitTime}s...`);
         return;
       }
 
@@ -80,36 +90,31 @@ export default function PosingCoach() {
             setTestImage(imageData);
           }
           
+          // Mark request time BEFORE making the call
+          lastRequestTime.current = Date.now();
+          
           const aiResponse = await analyzeFrame(imageData);
           console.timeEnd('⏱️ Analysis Time');
           
-          // Handle rate limit error
+          // Handle rate limit error - but don't get stuck
           if (aiResponse.includes("429") || aiResponse.includes("quota") || aiResponse.includes("Too Many Requests")) {
-            console.warn("🚨 Rate limit hit - pausing for 16 seconds");
-            setIsRateLimited(true);
-            setRetryAfter(16);
+            console.warn("🚨 Rate limit hit - will retry in 12s");
             setStatus("Rate limited");
-            setDebugInfo("⏸️ Rate limit hit - pausing...");
+            setDebugInfo("⏸️ Rate limit - retrying soon...");
+            // Force wait by updating last request time
+            lastRequestTime.current = Date.now();
+            return;
+          }
+          
+          // Handle other errors
+          if (aiResponse.startsWith("ERROR:")) {
+            console.error("AI Error:", aiResponse);
+            setStatus("AI Error");
+            setDebugInfo(aiResponse.substring(0, 100)); // Truncate long errors
             return;
           }
           
           console.log("📸 AI Response:", aiResponse);
-          
-          // Check if response is the same as last time
-          if (aiResponse === lastResponse) {
-            setSameResponseCount(prev => prev + 1);
-            
-            // If we've seen the same response 3+ times, slow down
-            if (sameResponseCount >= 2) {
-              setDebugInfo(`${aiResponse} (scene stable, slowing down...)`);
-              // Skip next 2 cycles to save quota
-              return;
-            }
-          } else {
-            setSameResponseCount(0);
-            setLastResponse(aiResponse);
-          }
-          
           setDebugInfo(aiResponse);
           
           if (aiResponse.startsWith("HUMAN:")) {
@@ -149,11 +154,6 @@ export default function PosingCoach() {
             setShowToast(false);
             setLastObjectDetected(null);
             
-          } else if (aiResponse.startsWith("ERROR:")) {
-            setConsecutiveHumanFrames(0);
-            setStatus("AI Error");
-            // Don't spam errors, just show once
-            
           } else {
             setConsecutiveHumanFrames(0);
             setStatus("Ready for Pose...");
@@ -166,10 +166,10 @@ export default function PosingCoach() {
           setConsecutiveHumanFrames(0);
         }
       }
-    }, 12000); // INCREASED: 12 seconds = 5 requests/min (free tier limit)
+    }, 3000); // Check every 3 seconds, but only call API every 12s
 
     return () => clearInterval(interval);
-  }, [startCamera, consecutiveHumanFrames, lastObjectDetected, testMode, isRateLimited, retryAfter, lastResponse, sameResponseCount]);
+  }, [consecutiveHumanFrames, lastObjectDetected, testMode]);
 
   return (
     <main style={{ 
@@ -199,7 +199,7 @@ export default function PosingCoach() {
             height: '8px', 
             borderRadius: '50%', 
             background: status === "Human Detected!" ? '#0f0' : 
-                       (status.includes("Error") || isRateLimited ? '#ff6b00' : '#666'),
+                       (status.includes("Error") || status.includes("Rate limited") ? '#ff6b00' : '#666'),
             transition: 'background 0.3s'
           }} />
           <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
@@ -340,7 +340,7 @@ export default function PosingCoach() {
         background: 'rgba(20,20,20,0.95)',
         padding: '15px 20px',
         borderRadius: '20px',
-        border: isRateLimited ? '1px solid rgba(255,107,0,0.5)' : '1px solid rgba(255,255,255,0.1)',
+        border: '1px solid rgba(255,255,255,0.1)',
         backdropFilter: 'blur(10px)',
         height: '80px',
         display: 'flex',
@@ -351,7 +351,7 @@ export default function PosingCoach() {
         <p style={{ 
           margin: 0, 
           fontSize: '0.65rem', 
-          color: isRateLimited ? '#ff6b00' : '#888', 
+          color: '#888', 
           fontWeight: 'bold',
           letterSpacing: '1px'
         }}>
