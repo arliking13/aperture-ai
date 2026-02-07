@@ -38,16 +38,17 @@ export default function PosingCoach() {
         const imageData = canvas.toDataURL('image/jpeg', 0.3);
         
         const aiAdvice = await analyzeFrame(imageData);
-        
-        if (aiAdvice === "NONE" || !aiAdvice) {
-          setStatus("Waiting for Human...");
-          setShowToast(false);
-        } else {
-          setAdvice(aiAdvice);
-          setShowToast(true);
-          setStatus("Human Detected!");
-          setTimeout(() => setShowToast(false), 5000);
-        }
+
+if (aiAdvice === "READY" || !aiAdvice) {
+  setStatus("Ready for Pose...");
+  setShowToast(false);
+} else {
+  setAdvice(aiAdvice);
+  setShowToast(true);
+  setStatus("Human Detected!"); // Green dot
+  setTimeout(() => setShowToast(false), 5000);
+}
+
       }
     }, 4000);
     return () => clearInterval(interval);
