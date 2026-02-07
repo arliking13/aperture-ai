@@ -16,20 +16,23 @@ export default function PhotoCoach() {
 
     // The "Live" Loop: Runs every 3 seconds
     const interval = setInterval(async () => {
-      if (videoRef.current && canvasRef.current) {
-        const canvas = canvasRef.current;
-        const context = canvas.getContext('2d');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        
-        // Draw the current video frame to the hidden canvas
-        context?.drawImage(videoRef.current, 0, 0);
-        const imageData = canvas.toDataURL('image/jpeg', 0.5); // Compress for speed
-        
-        const aiAdvice = await analyzeFrame(imageData);
-        setAdvice(aiAdvice);
-      }
-    }, 3000);
+  if (videoRef.current && canvasRef.current) {
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    // FORCE a smaller size (AI doesn't need 4K to see a figure)
+    canvas.width = 320; 
+    canvas.height = 240;
+    
+    context?.drawImage(videoRef.current, 0, 0, 320, 240);
+    
+    // Use 0.1 for high compression
+    const imageData = canvas.toDataURL('image/jpeg', 0.1); 
+    
+    const aiAdvice = await analyzeFrame(imageData);
+    setAdvice(aiAdvice);
+  }
+}, 3000);
 
     return () => clearInterval(interval);
   }, []);
