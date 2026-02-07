@@ -1,10 +1,13 @@
 "use server";
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-export async function analyzeFrame(base64Image: string) {
+export async function analyzeFrame(base64Image: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
-    if (!key) return { detected: false, advice: "" };
+    if (!key) {
+      console.error("No API Key found");
+      return "EMPTY";
+    }
 
     const genAI = new GoogleGenerativeAI(key);
     const model = genAI.getGenerativeModel({ 
@@ -19,13 +22,12 @@ export async function analyzeFrame(base64Image: string) {
     
     const base64Data = base64Image.split(",")[1];
     
-    const prompt = `You are a professional posing coach analyzing a camera frame.
+    const prompt = `You are analyzing a camera frame for a posing coach app.
     
-    Task:
-    1. If you see a human figure in the frame, give ONE specific 10-word tip to improve their pose (e.g., "Tilt chin up 10 degrees for better angle").
-    2. If the frame is empty or shows only objects (bottles, desk items, animals), respond with exactly: "EMPTY"
-    
-    Focus on posture geometry. Do not identify the person.`;
+If you see a person/human figure: Give ONE short tip under 12 words (example: "Tilt head slightly left").
+If frame is empty or just objects: Reply with exactly "EMPTY"
+
+Be helpful. Focus on pose geometry only.`;
 
     const result = await model.generateContent([
       prompt,
@@ -34,15 +36,12 @@ export async function analyzeFrame(base64Image: string) {
 
     const text = result.response.text().trim();
     
-    // Return structured response
-    if (text === "EMPTY" || text.length < 5) {
-      return { detected: false, advice: "" };
-    }
+    console.log("AI Response:", text); // This will show in Vercel Logs
     
-    return { detected: true, advice: text };
+    return text;
     
   } catch (error: any) {
-    console.error("AI Error:", error);
-    return { detected: false, advice: "" };
+    console.error("AI Action Error:", error.message);
+    return "EMPTY";
   }
 }

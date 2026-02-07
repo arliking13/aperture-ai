@@ -8,13 +8,11 @@ export default function PosingCoach() {
   
   const [advice, setAdvice] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
-  const [humanDetected, setHumanDetected] = useState(false);
+  const [status, setStatus] = useState("Initializing...");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
 
-  // Camera initialization with cleanup
   const startCamera = useCallback(async () => {
     try {
-      // Stop previous tracks to prevent conflicts
       if (videoRef.current?.srcObject) {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
         tracks.forEach(track => track.stop());
@@ -30,51 +28,58 @@ export default function PosingCoach() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        setStatus("Camera Ready");
       }
     } catch (err) {
       console.error("Camera Error:", err);
+      setStatus("Camera Error");
     }
   }, [facingMode]);
 
   useEffect(() => {
     startCamera();
 
-    // AI Analysis Loop (every 4 seconds)
     const interval = setInterval(async () => {
       if (videoRef.current && videoRef.current.readyState >= 2) {
-        const canvas = canvasRef.current!;
-        const context = canvas.getContext('2d');
-        
-        // Capture frame at higher resolution for better detection
-        canvas.width = 640;
-        canvas.height = 480;
-        context?.drawImage(videoRef.current, 0, 0, 640, 480);
-        
-        const imageData = canvas.toDataURL('image/jpeg', 0.3);
-        const result = await analyzeFrame(imageData);
-        
-        if (result.detected) {
-          // Human found - show coaching tip
-          setHumanDetected(true);
-          setAdvice(result.advice);
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 5000);
-        } else {
-          // No human - hide notification and update status
-          setHumanDetected(false);
-          setShowToast(false);
+        try {
+          setStatus("Analyzing...");
+          
+          const canvas = canvasRef.current!;
+          const context = canvas.getContext('2d');
+          canvas.width = 640;
+          canvas.height = 480;
+          context?.drawImage(videoRef.current, 0, 0, 640, 480);
+          
+          const imageData = canvas.toDataURL('image/jpeg', 0.3);
+          
+          // AI returns a string: either "EMPTY" or the coaching tip
+          const aiResponse = await analyzeFrame(imageData);
+          
+          console.log("AI says:", aiResponse); // Debug
+          
+          // Check if response is "EMPTY" or too short
+          if (aiResponse === "EMPTY" || aiResponse.length < 5) {
+            setStatus("Ready for Pose...");
+            setShowToast(false);
+          } else {
+            // Human detected - show the tip
+            setStatus("Human Detected!");
+            setAdvice(aiResponse);
+            setShowToast(true);
+            setTimeout(() => {
+              setShowToast(false);
+              setStatus("Ready for Pose...");
+            }, 5000);
+          }
+        } catch (err) {
+          console.error("Loop Error:", err);
+          setStatus("AI Error");
         }
       }
     }, 4000);
 
     return () => clearInterval(interval);
   }, [startCamera]);
-
-  // Compute status text
-  const getStatus = () => {
-    if (humanDetected) return "Human Detected!";
-    return "Ready for Pose...";
-  };
 
   return (
     <main style={{ 
@@ -99,16 +104,10 @@ export default function PosingCoach() {
           width: '8px', 
           height: '8px', 
           borderRadius: '50%', 
-          background: humanDetected ? '#0f0' : '#666',
+          background: status === "Human Detected!" ? '#0f0' : (status.includes("Error") ? 'red' : '#666'),
           transition: 'background 0.3s'
         }} />
-        <span style={{ 
-          color: '#fff', 
-          fontSize: '0.7rem', 
-          opacity: 0.6 
-        }}>
-          {getStatus()}
-        </span>
+        <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
       </div>
 
       {/* COACHING NOTIFICATION */}
@@ -125,17 +124,9 @@ export default function PosingCoach() {
           borderRadius: '24px', 
           boxShadow: '0 15px 40px rgba(0,0,0,0.8)', 
           zIndex: 100,
-          borderLeft: '8px solid #0070f3',
-          animation: 'slideDown 0.4s ease'
+          borderLeft: '8px solid #0070f3'
         }}>
-          <p style={{ 
-            margin: 0, 
-            fontSize: '1rem', 
-            color: '#000', 
-            lineHeight: '1.4' 
-          }}>
-            {advice}
-          </p>
+          <p style={{ margin: 0, fontSize: '1rem', color: '#000', lineHeight: '1.4' }}>{advice}</p>
         </div>
       )}
 
@@ -163,7 +154,7 @@ export default function PosingCoach() {
         />
         <canvas ref={canvasRef} style={{ display: 'none' }} />
         
-        {/* CAMERA FLIP BUTTON */}
+        {/* FLIP BUTTON */}
         <button 
           onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
           style={{
@@ -180,21 +171,14 @@ export default function PosingCoach() {
             alignItems: 'center', 
             backdropFilter: 'blur(10px)',
             cursor: 'pointer', 
-            zIndex: 10,
-            transition: 'background 0.2s'
+            zIndex: 10
           }}
-          onMouseDown={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
-          onMouseUp={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
         >
           <span style={{ fontSize: '24px' }}>🔄</span>
         </button>
 
         {/* RULE OF THIRDS GRID */}
-        <div style={{ 
-          position: 'absolute', 
-          inset: 0, 
-          pointerEvents: 'none' 
-        }}>
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <div style={{ position: 'absolute', top: '33%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
           <div style={{ position: 'absolute', top: '66%', width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)' }} />
           <div style={{ position: 'absolute', left: '33%', height: '100%', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
@@ -202,29 +186,9 @@ export default function PosingCoach() {
         </div>
       </div>
 
-      {/* BRANDING */}
-      <p style={{ 
-        marginTop: '30px', 
-        color: '#444', 
-        fontSize: '0.7rem', 
-        letterSpacing: '2px' 
-      }}>
+      <p style={{ marginTop: '30px', color: '#444', fontSize: '0.7rem', letterSpacing: '2px' }}>
         APERTURE AI • POSE COACH
       </p>
-
-      {/* ANIMATION */}
-      <style jsx>{`
-        @keyframes slideDown {
-          from { 
-            transform: translateX(-50%) translateY(-20px); 
-            opacity: 0; 
-          }
-          to { 
-            transform: translateX(-50%) translateY(0); 
-            opacity: 1; 
-          }
-        }
-      `}</style>
     </main>
   );
 }
