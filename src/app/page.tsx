@@ -12,13 +12,17 @@ export default function PosingCoach() {
   const [debugInfo, setDebugInfo] = useState("Waiting for first frame...");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("environment");
   
-  // NEW: Consecutive frame validation to reduce false positives
   const [consecutiveHumanFrames, setConsecutiveHumanFrames] = useState(0);
   const [lastObjectDetected, setLastObjectDetected] = useState<string | null>(null);
   
-  // NEW: Test mode to see what the AI sees
   const [testMode, setTestMode] = useState(false);
   const [testImage, setTestImage] = useState<string | null>(null);
+  
+  // NEW: Rate limiting and caching
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [retryAfter, setRetryAfter] = useState(0);
+  const [lastResponse, setLastResponse] = useState<string | null>(null);
+  const [sameResponseCount, setSameResponseCount] = useState(0);
 
   const startCamera = useCallback(async () => {
     try {
@@ -49,9 +53,19 @@ export default function PosingCoach() {
     startCamera();
 
     const interval = setInterval(async () => {
+      // Check if we're rate limited
+      if (isRateLimited && retryAfter > 0) {
+        setStatus(`Rate limited (${retryAfter}s)`);
+        setRetryAfter(prev => Math.max(0, prev - 1));
+        if (retryAfter <= 1) {
+          setIsRateLimited(false);
+        }
+        return;
+      }
+
       if (videoRef.current && videoRef.current.readyState >= 2) {
         try {
-          console.time('⏱️ Analysis Time'); // Performance tracking
+          console.time('⏱️ Analysis Time');
           setStatus("Analyzing...");
           
           const canvas = canvasRef.current!;
@@ -62,7 +76,6 @@ export default function PosingCoach() {
           
           const imageData = canvas.toDataURL('image/jpeg', 0.3);
           
-          // Store test image if test mode is enabled
           if (testMode) {
             setTestImage(imageData);
           }
@@ -70,13 +83,38 @@ export default function PosingCoach() {
           const aiResponse = await analyzeFrame(imageData);
           console.timeEnd('⏱️ Analysis Time');
           
+          // Handle rate limit error
+          if (aiResponse.includes("429") || aiResponse.includes("quota") || aiResponse.includes("Too Many Requests")) {
+            console.warn("🚨 Rate limit hit - pausing for 16 seconds");
+            setIsRateLimited(true);
+            setRetryAfter(16);
+            setStatus("Rate limited");
+            setDebugInfo("⏸️ Rate limit hit - pausing...");
+            return;
+          }
+          
           console.log("📸 AI Response:", aiResponse);
+          
+          // Check if response is the same as last time
+          if (aiResponse === lastResponse) {
+            setSameResponseCount(prev => prev + 1);
+            
+            // If we've seen the same response 3+ times, slow down
+            if (sameResponseCount >= 2) {
+              setDebugInfo(`${aiResponse} (scene stable, slowing down...)`);
+              // Skip next 2 cycles to save quota
+              return;
+            }
+          } else {
+            setSameResponseCount(0);
+            setLastResponse(aiResponse);
+          }
+          
           setDebugInfo(aiResponse);
           
           if (aiResponse.startsWith("HUMAN:")) {
             const tip = aiResponse.replace("HUMAN:", "").trim();
             
-            // Require 2 consecutive human detections before showing advice
             setConsecutiveHumanFrames(prev => prev + 1);
             
             if (consecutiveHumanFrames >= 1) {
@@ -96,10 +134,8 @@ export default function PosingCoach() {
           } else if (aiResponse.startsWith("OBJECT:")) {
             const objectName = aiResponse.replace("OBJECT:", "").trim();
             
-            // Reset human counter
             setConsecutiveHumanFrames(0);
             
-            // Avoid spamming status if it's the same object
             if (lastObjectDetected !== objectName) {
               setStatus(`Detected: ${objectName}`);
               setLastObjectDetected(objectName);
@@ -113,8 +149,12 @@ export default function PosingCoach() {
             setShowToast(false);
             setLastObjectDetected(null);
             
+          } else if (aiResponse.startsWith("ERROR:")) {
+            setConsecutiveHumanFrames(0);
+            setStatus("AI Error");
+            // Don't spam errors, just show once
+            
           } else {
-            // Fallback for unexpected responses
             setConsecutiveHumanFrames(0);
             setStatus("Ready for Pose...");
             setShowToast(false);
@@ -126,10 +166,10 @@ export default function PosingCoach() {
           setConsecutiveHumanFrames(0);
         }
       }
-    }, 4000); // Keep at 4s for now - reduce to 3000 or 2500 after testing
+    }, 12000); // INCREASED: 12 seconds = 5 requests/min (free tier limit)
 
     return () => clearInterval(interval);
-  }, [startCamera, consecutiveHumanFrames, lastObjectDetected, testMode]);
+  }, [startCamera, consecutiveHumanFrames, lastObjectDetected, testMode, isRateLimited, retryAfter, lastResponse, sameResponseCount]);
 
   return (
     <main style={{ 
@@ -158,13 +198,14 @@ export default function PosingCoach() {
             width: '8px', 
             height: '8px', 
             borderRadius: '50%', 
-            background: status === "Human Detected!" ? '#0f0' : (status.includes("Error") ? 'red' : '#666'),
+            background: status === "Human Detected!" ? '#0f0' : 
+                       (status.includes("Error") || isRateLimited ? '#ff6b00' : '#666'),
             transition: 'background 0.3s'
           }} />
           <span style={{ color: '#fff', fontSize: '0.7rem', opacity: 0.6 }}>{status}</span>
         </div>
 
-        {/* TEST MODE TOGGLE (Top Left) */}
+        {/* TEST MODE TOGGLE */}
         <button 
           onClick={() => setTestMode(!testMode)}
           style={{
@@ -299,7 +340,7 @@ export default function PosingCoach() {
         background: 'rgba(20,20,20,0.95)',
         padding: '15px 20px',
         borderRadius: '20px',
-        border: '1px solid rgba(255,255,255,0.1)',
+        border: isRateLimited ? '1px solid rgba(255,107,0,0.5)' : '1px solid rgba(255,255,255,0.1)',
         backdropFilter: 'blur(10px)',
         height: '80px',
         display: 'flex',
@@ -310,7 +351,7 @@ export default function PosingCoach() {
         <p style={{ 
           margin: 0, 
           fontSize: '0.65rem', 
-          color: '#888', 
+          color: isRateLimited ? '#ff6b00' : '#888', 
           fontWeight: 'bold',
           letterSpacing: '1px'
         }}>
