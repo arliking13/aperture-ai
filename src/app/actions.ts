@@ -4,39 +4,30 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 export async function analyzeFrame(base64Image: string) {
   try {
     const key = process.env.GEMINI_API_KEY;
-    if (!key) return "API Key Missing";
+    if (!key) return "API_MISSING";
 
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash-latest",
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-      ]
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
     
     const base64Data = base64Image.split(",")[1];
     
-    // NEW POSE COACH PROMPT
-    const prompt = `You are a professional Posing Coach for human portraits.
-    1. If you DO NOT see a human in the frame (e.g., just objects, animals, or toys), respond ONLY with: "Please step into the frame so I can help you pose!"
-    2. If you see a human, give ONE specific 10-word tip to improve their pose (e.g., 'Tilt your head 5 degrees left' or 'Place your hand on your hip').
-    3. Ignore all non-human objects. Focus entirely on human posture and angles.`;
+    // THE "TRUTH ANCHOR" PROMPT
+    const prompt = `Task: Professional Human Posing Coach.
+    Requirement: Analyze the image for a REAL HUMAN being. 
+    Rule 1: If there is no clear human person, respond ONLY with the word 'NONE'.
+    Rule 2: Do NOT give tips for objects, water bottles, hands, or toys.
+    Rule 3: If a human is found, give ONE 10-word tip for their posing angle. 
+    Be strict. No human = 'NONE'.`;
 
     const result = await model.generateContent([
       prompt,
       { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
     ]);
 
-    const text = result.response.text();
-
-    // If the AI is blocked or returns nothing, remind the user to pose
-    return text && text.length > 5 ? text : "Ready for your pose! Please step into view.";
+    const text = result.response.text().trim();
+    return text; // Returns 'NONE' or a real tip
     
   } catch (error: any) {
-    console.error("AI ERROR:", error);
-    return "Waiting for a human subject..."; 
+    return "NONE"; 
   }
 }
