@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; 
+const FRAMES_TO_LOCK = 60; // ~2 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -33,6 +33,7 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const shouldTrack = useRef(false); // The Kill Switch
 
   useEffect(() => {
     async function loadAI() {
@@ -58,6 +59,9 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = useCallback(() => {
+    // Check 1: Should we even start?
+    if (!shouldTrack.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -66,17 +70,19 @@ export function usePoseTracker(
       return;
     }
 
+    // HEAVY CALCULATION HAPPENS HERE
     const results = landmarker.detectForVideo(video, performance.now());
-    const ctx = canvas.getContext('2d');
     
+    // Check 2: GATEKEEPER - Did the user click 'Stop' while we were thinking?
+    // If yes, STOP HERE. Do not draw.
+    if (!shouldTrack.current) return; 
+
+    const ctx = canvas.getContext('2d');
     if (ctx) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
-        
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
         if (movement < MOVEMENT_THRESHOLD) {
@@ -97,9 +103,8 @@ export function usePoseTracker(
            startCountdown();
         }
 
-        const isStable = percent > 50;
-        const color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
-        
+        // Draw
+        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -107,7 +112,10 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    requestRef.current = requestAnimationFrame(detectPose);
+    
+    if (shouldTrack.current) {
+      requestRef.current = requestAnimationFrame(detectPose);
+    }
   }, [landmarker, timerDuration, onCaptureTrigger]);
 
   const startCountdown = () => {
@@ -130,15 +138,23 @@ export function usePoseTracker(
   };
 
   const startTracking = useCallback(() => {
-    if (!requestRef.current) detectPose();
+    if (!shouldTrack.current) {
+      shouldTrack.current = true;
+      detectPose();
+    }
   }, [detectPose]);
 
   const stopTracking = useCallback(() => {
+    // 1. Flip the switch immediately
+    shouldTrack.current = false;
+    
+    // 2. Cancel next frame
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
     
+    // 3. Clear Countdown
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
       countdownTimer.current = null;
@@ -148,14 +164,18 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // --- THE FIX: Wipe the canvas instantly ---
+    // 4. FORCE CLEAR CANVAS (Wipes any existing lines)
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        // Wipe again in next frame just to be sure
+        
+        // Double-tap clear (just in case a frame slipped through)
         requestAnimationFrame(() => {
-             ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+             if (canvasRef.current) {
+                const ctx2 = canvasRef.current.getContext('2d');
+                ctx2?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+             }
         });
       }
     }
