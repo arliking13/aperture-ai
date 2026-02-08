@@ -36,19 +36,19 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
-  const { isAiReady, isStill, countdown, stability } = usePoseTracker(
+  const { isAiReady, startTracking, stopTracking, isStill, countdown, stability } = usePoseTracker(
     videoRef,
     canvasRef,
     () => addLog("📸 SNAPSHOT TRIGGERED!"), 
-    3,
-    true, // isActive: Always ON for debug
-    true  // shouldCapture: Always ON for debug
+    3
   );
 
   useEffect(() => {
     if (cameraActive && isAiReady) {
-      addLog("AI Loop Running...");
+      addLog("Starting AI Loop...");
+      startTracking();
     }
+    return () => stopTracking();
   }, [cameraActive, isAiReady]);
 
   return (

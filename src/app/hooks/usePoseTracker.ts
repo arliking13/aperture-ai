@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
+// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; 
+const FRAMES_TO_LOCK = 150; // ~5 Seconds (The setting you liked)
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -22,9 +23,7 @@ export function usePoseTracker(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   onCaptureTrigger: () => void,
-  timerDuration: number,
-  isActive: boolean,      // NEW: Master On/Off Switch
-  shouldCapture: boolean  // NEW: Only true when you want the countdown to run
+  timerDuration: number
 ) {
   const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
@@ -36,7 +35,7 @@ export function usePoseTracker(
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. Load AI Model
+  // 1. Load AI
   useEffect(() => {
     async function loadAI() {
       try {
@@ -60,17 +59,8 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  // 2. The Loop
-  const detectPose = useCallback(() => {
-    // If deactivated, STOP and CLEAR immediately.
-    if (!isActive) {
-        if (canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
-        return; 
-    }
-
+  // 2. Detection Loop
+  const detectPose = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -83,17 +73,20 @@ export function usePoseTracker(
     const ctx = canvas.getContext('2d');
     
     if (ctx) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
+        
+        // Motion Logic
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
-            stillFrames.current = Math.max(0, stillFrames.current - 5);
-            // Cancel timer if moved
+            stillFrames.current = Math.max(0, stillFrames.current - 4);
             if (countdownTimer.current) {
               clearInterval(countdownTimer.current);
               countdownTimer.current = null;
@@ -104,18 +97,11 @@ export function usePoseTracker(
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
-        // START COUNTDOWN only if shouldCapture is TRUE
-        if (shouldCapture && stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
+        if (stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
            startCountdown();
         }
 
-        // Draw Skeleton
-        const isStable = percent > 50;
-        let color = 'rgba(255, 255, 255, 0.3)'; // Default faint white
-        if (shouldCapture) {
-            color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.8)';
-        }
-
+        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -123,10 +109,8 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    
-    // Loop
     requestRef.current = requestAnimationFrame(detectPose);
-  }, [isActive, shouldCapture, landmarker, timerDuration, onCaptureTrigger]);
+  };
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -147,32 +131,38 @@ export function usePoseTracker(
     }, 1000);
   };
 
-  // 3. MASTER CONTROL EFFECT
-  // This automatically starts/stops based on 'isActive' prop
-  useEffect(() => {
-    if (isActive && isAiReady) {
-        // START
-        detectPose();
-    } else {
-        // STOP & CLEAN
-        if (requestRef.current) cancelAnimationFrame(requestRef.current);
-        if (countdownTimer.current) clearInterval(countdownTimer.current);
-        setStability(0);
-        setCountdown(null);
-        stillFrames.current = 0;
-        
-        // Force Wipe
-        if (canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
+  const startTracking = () => {
+    if (!requestRef.current) detectPose();
+  };
+
+  // --- THE FIX: We added canvas clearing here ---
+  const stopTracking = () => {
+    // 1. Stop the loop
+    if (requestRef.current) {
+      cancelAnimationFrame(requestRef.current);
+      requestRef.current = null;
     }
     
-    return () => {
-        if (requestRef.current) cancelAnimationFrame(requestRef.current);
-        if (countdownTimer.current) clearInterval(countdownTimer.current);
-    };
-  }, [isActive, isAiReady, detectPose]);
+    // 2. Clear the canvas (This removes the ghost lines)
+    if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+    }
 
-  return { isAiReady, countdown, stability, isStill: stability > 20 };
+    // 3. Reset state
+    if (countdownTimer.current) {
+        clearInterval(countdownTimer.current);
+        countdownTimer.current = null;
+    }
+    setStability(0);
+    setCountdown(null);
+    stillFrames.current = 0;
+  };
+
+  useEffect(() => { return () => stopTracking(); }, []);
+
+  // Return the original 4 items + stability/isStill for the UI
+  return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
 }
