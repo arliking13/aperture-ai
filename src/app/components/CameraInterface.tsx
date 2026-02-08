@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES (Moved here to fix 'Cannot find name' errors) ---
+// --- STYLES MOVED TO TOP ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -193,7 +193,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC: Based on your old code logic ---
+  // --- LOGIC: Start only if Auto Mode is ON. Stop otherwise. ---
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
@@ -235,12 +235,13 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
         
-        {/* --- NUCLEAR OPTION: This KEY forces React to destroy/recreate the canvas when mode changes --- */}
-        <canvas 
-            ref={canvasRef}  
-            key={autoCaptureEnabled ? 'auto' : 'manual'}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }} 
-        />
+        {/* --- NUCLEAR OPTION: If Auto is Disabled, remove the canvas entirely --- */}
+        {autoCaptureEnabled && (
+            <canvas 
+                ref={canvasRef} 
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
+            />
+        )}
 
         {activeCountdown !== null && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>

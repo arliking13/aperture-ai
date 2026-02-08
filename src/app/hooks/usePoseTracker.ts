@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
+// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
 const FRAMES_TO_LOCK = 60; // ~2 Seconds
 
@@ -145,22 +146,15 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // Standard wipe
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
     }
   };
 
   useEffect(() => { return () => stopTracking(); }, []);
 
-  // Returns exact props for interface + isStill for Debugger
-  return { 
-    isAiReady, 
-    startTracking, 
-    stopTracking, 
-    countdown, 
-    stability,
-    isStill: stability > 20 
-  };
+  return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
 }
