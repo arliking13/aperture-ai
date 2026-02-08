@@ -1,3 +1,4 @@
+// src/app/hooks/usePoseTracker.ts
 import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 import { calculateMovement } from '../utils/cameraHelpers';
@@ -7,7 +8,7 @@ export function usePoseTracker(
   canvasRef: React.RefObject<HTMLCanvasElement>,
   onCaptureTrigger: () => void,
   timerDuration: number,
-  isAutoEnabled: boolean
+  shouldCapture: boolean // <--- NEW: Only capture when this is TRUE
 ) {
   const [isAiReady, setIsAiReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -20,18 +21,16 @@ export function usePoseTracker(
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
   
-  // FIX 1: Create a Ref for the Auto Switch so the loop always sees the REAL value
-  const isAutoRef = useRef(isAutoEnabled);
+  // FIX: Track the capture state in a ref so the loop sees changes instantly
+  const shouldCaptureRef = useRef(shouldCapture);
   const captureRef = useRef(onCaptureTrigger);
 
-  // Keep Refs updated
-  useEffect(() => { isAutoRef.current = isAutoEnabled; }, [isAutoEnabled]);
+  useEffect(() => { shouldCaptureRef.current = shouldCapture; }, [shouldCapture]);
   useEffect(() => { captureRef.current = onCaptureTrigger; }, [onCaptureTrigger]);
 
-  // FIX 2: Emergency Stop Listener
+  // Stop everything if capture is cancelled
   useEffect(() => {
-    if (!isAutoEnabled) {
-        // Kill any active countdown immediately
+    if (!shouldCapture) {
         if (countdownTimer.current) {
             clearInterval(countdownTimer.current);
             countdownTimer.current = null;
@@ -39,14 +38,8 @@ export function usePoseTracker(
         setCountdown(null);
         setIsStill(false);
         stillFrames.current = 0;
-        
-        // Clear the red/green lines from screen
-        if (canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
     }
-  }, [isAutoEnabled]);
+  }, [shouldCapture]);
 
   useEffect(() => {
     async function loadAI() {
@@ -64,12 +57,6 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = () => {
-    // FIX 3: Check the REF, not the variable. This forces it to respect the switch instantly.
-    if (!isAutoRef.current) {
-         requestRef.current = requestAnimationFrame(detectPose);
-         return;
-    }
-
     if (landmarkerRef.current && videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
       const results = landmarkerRef.current.detectForVideo(videoRef.current, performance.now());
       const ctx = canvasRef.current.getContext('2d');
@@ -81,10 +68,13 @@ export function usePoseTracker(
         
         if (results.landmarks && results.landmarks.length > 0) {
             const landmarks = results.landmarks[0];
+            
+            // 1. ALWAYS DRAW SKELETON (Visual Feedback)
             const drawingUtils = new DrawingUtils(ctx);
             drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
-            if (!countdownTimer.current) {
+            // 2. ONLY CAPTURE IF REQUESTED
+            if (shouldCaptureRef.current && !countdownTimer.current) {
                 if (calculateMovement(landmarks, previousLandmarks.current) < 0.008) {
                     stillFrames.current++;
                     setIsStill(true);
@@ -94,9 +84,10 @@ export function usePoseTracker(
                     stillFrames.current = 0; 
                     setIsStill(false); 
                 }
-                previousLandmarks.current = landmarks;
             }
+            previousLandmarks.current = landmarks;
         } else { 
+            // Reset if no person found
             setIsStill(false); 
             stillFrames.current = 0; 
         }
@@ -106,21 +97,23 @@ export function usePoseTracker(
   };
 
   const startCountdown = () => {
-    // FIX 4: Double check Auto is still ON before starting
-    if (!isAutoRef.current) return;
+    // Safety check
+    if (!shouldCaptureRef.current) return;
 
+    // Instant Snap (0s Timer)
     if (timerDuration === 0) {
         if (captureRef.current) captureRef.current();
         stillFrames.current = 0;
         return;
     }
 
+    // Standard Countdown
     let count = timerDuration;
     setCountdown(count);
     
     countdownTimer.current = setInterval(() => {
-      // FIX 5: If user switched to manual DURING countdown, abort!
-      if (!isAutoRef.current) {
+      // Abort if user cancelled capture mid-countdown
+      if (!shouldCaptureRef.current) {
           clearInterval(countdownTimer.current!);
           countdownTimer.current = null;
           setCountdown(null);

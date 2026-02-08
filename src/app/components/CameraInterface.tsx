@@ -28,9 +28,18 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
 
+  // --- TRIGGER STATE ---
+  // This is the key fix: We only let AI snap when this is true
+  const [waitingForAi, setWaitingForAi] = useState(false);
+
   // --- CAPTURE ---
   const performCapture = useCallback(() => {
     if (!videoRef.current) return;
+    
+    // 1. Reset AI Wait State (Stop shooting!)
+    setWaitingForAi(false);
+
+    // 2. Flash & Snap
     setFlashActive(true);
     setTimeout(() => setFlashActive(false), 150);
     const image = takeSnapshot(videoRef.current, format, isMirrored);
@@ -43,18 +52,27 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     canvasRef as React.RefObject<HTMLCanvasElement>,
     performCapture, 
     timerDuration, 
-    autoCaptureEnabled
+    waitingForAi // <--- FIX: Hook only runs logic when this is true
   );
 
-  // --- MANUAL SHUTTER ---
+  // --- SHUTTER BUTTON HANDLER ---
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
-  const handleManualShutter = () => {
+  const handleShutterPress = () => {
     if (isProcessing) return;
+
+    // AUTO MODE: Just tell AI to start looking
+    if (autoCaptureEnabled) {
+        setWaitingForAi(true);
+        return;
+    }
+
+    // MANUAL MODE: Standard timer logic
     if (timerDuration === 0) {
       performCapture();
       return;
     }
+    
     setManualCountdown(timerDuration);
     let count = timerDuration;
     const interval = setInterval(() => {
@@ -78,68 +96,50 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     zoomTimeoutRef.current = setTimeout(() => {
         if (!videoRef.current?.srcObject) return;
         const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
-        // FIX: Cast to any to avoid TS error
         (track as any).applyConstraints({ advanced: [{ zoom: z }] }).catch((e: any) => console.log(e));
     }, 100);
   };
 
   // --- CAMERA SETUP ---
-  // Modified to accept a specific mode to support instant switching
   const startCamera = async (overrideMode?: 'user' | 'environment') => {
     try {
       const modeToUse = overrideMode || facingMode;
-
-      // Stop existing stream if running (Important for switching!)
       if (videoRef.current && videoRef.current.srcObject) {
          const oldStream = videoRef.current.srcObject as MediaStream;
          oldStream.getTracks().forEach(track => track.stop());
       }
 
-      // FIX: Cast constraints to any
       const constraints: any = {
-        video: { 
-          facingMode: modeToUse, 
-          width: { ideal: 1920 }, 
-          height: { ideal: 1080 }, 
-          zoom: true 
-        }
+        video: { facingMode: modeToUse, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadeddata = () => {
           videoRef.current?.play();
-          setCameraStarted(true); // Ensure UI stays visible
-          
+          setCameraStarted(true);
           const track = stream.getVideoTracks()[0];
-          // FIX: Cast capabilities to any
           const caps = (track.getCapabilities() as any) || {};
           if (caps.zoom) {
             setZoomCap({ min: caps.zoom.min, max: caps.zoom.max });
-            setZoom(1); // Reset zoom on switch
+            setZoom(1);
           }
         };
       }
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // Initial Start
   useEffect(() => {
     if (cameraStarted) startTracking(); else stopTracking();
   }, [cameraStarted, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   
-  // FIX: Instant Switch Logic
   const switchCamera = async () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
     setIsMirrored(newMode === 'user');
-    
-    // Do NOT setCameraStarted(false) here! 
-    // Just restart the stream directly.
     await startCamera(newMode);
   };
 
@@ -198,9 +198,19 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
+        {/* AI STATUS OVERLAY */}
         {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
-           <div style={{ position: 'absolute', top: 20, background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, color: isStill?'#00ff88':'#fff', fontSize: 12, fontWeight: 'bold', backdropFilter: 'blur(4px)', border: isStill?'1px solid #00ff88':'none' }}>
-             {isAiReady ? (isStill ? "Hold Still..." : "Looking...") : "Loading AI..."}
+           <div style={{ 
+              position: 'absolute', top: 20, 
+              background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, 
+              color: '#fff', fontSize: 12, fontWeight: 'bold', 
+              backdropFilter: 'blur(4px)', 
+              border: isStill ? '1px solid #00ff88' : '1px solid transparent',
+              opacity: waitingForAi ? 1 : 0.5 // Fade out if not active
+           }}>
+             {isAiReady ? (
+                waitingForAi ? (isStill ? "Hold Still..." : "Hold pose...") : "Press Shutter to Start"
+             ) : "Loading AI..."}
            </div>
         )}
       </div>
@@ -244,20 +254,25 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              </div>
           </div>
 
-          <button onClick={handleManualShutter} disabled={isProcessing}
+          <button onClick={handleShutterPress} disabled={isProcessing}
              style={{ 
                width: 80, height: 80, borderRadius: '50%', 
                background: isProcessing?'#333':'#fff', 
-               border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: 4, 
+               border: waitingForAi ? '4px solid #00ff88' : '4px solid rgba(0,0,0,0)', 
+               outline: '4px solid #fff', outlineOffset: 4, 
                cursor: isProcessing?'wait':'pointer', 
                transform: isProcessing?'scale(0.9)':'scale(1)',
                position: 'relative'
              }}
           >
-             {timerDuration > 0 && !isProcessing && (
+             {/* Show "Time" or "AI" icon inside button */}
+             {timerDuration > 0 && !isProcessing && !waitingForAi && (
                 <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: 20, color: '#000', fontWeight: 'bold' }}>
                    {timerDuration}
                 </span>
+             )}
+             {waitingForAi && (
+                 <div style={{ position: 'absolute', inset: 10, borderRadius: '50%', background: '#00ff88', animation: 'pulse 1s infinite' }} />
              )}
           </button>
         </div>
