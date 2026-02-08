@@ -4,7 +4,12 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// ... Snapshot helper stays the same ...
+// --- STYLES (Moved to top to prevent "Cannot find name" errors) ---
+const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
+const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
+const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
+
+// Snapshot helper
 const takeSnapshot = (video: HTMLVideoElement, format: string, isMirrored: boolean) => {
     const canvas = document.createElement('canvas');
     const vidW = video.videoWidth;
@@ -188,6 +193,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
+  // --- LOGIC: Active only when Recording + Auto is On ---
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
@@ -229,10 +235,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
         
-        {/* --- ADDED KEY FIX: Forces canvas destruction on toggle --- */}
+        {/* --- THE GHOST FIX: This key prop forces the canvas to be replaced when you toggle modes --- */}
         <canvas 
           ref={canvasRef} 
-          key={autoSessionActive ? 'active' : 'idle'}
+          key={autoCaptureEnabled ? 'auto' : 'manual'}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
@@ -333,7 +339,3 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     </div>
   );
 }
-
-const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
-const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
-const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };

@@ -36,6 +36,7 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
+  // Correctly destructured now
   const { isAiReady, startTracking, stopTracking, isStill, countdown, stability } = usePoseTracker(
     videoRef,
     canvasRef,

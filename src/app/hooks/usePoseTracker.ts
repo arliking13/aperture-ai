@@ -33,6 +33,7 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const shouldTrack = useRef(false);
 
   useEffect(() => {
     async function loadAI() {
@@ -58,6 +59,8 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = useCallback(() => {
+    if (!shouldTrack.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -69,13 +72,15 @@ export function usePoseTracker(
     const results = landmarker.detectForVideo(video, performance.now());
     const ctx = canvas.getContext('2d');
     
-    if (ctx) {
+    // Safety check again before drawing
+    if (ctx && shouldTrack.current) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
+        
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
         if (movement < MOVEMENT_THRESHOLD) {
@@ -104,7 +109,10 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    requestRef.current = requestAnimationFrame(detectPose);
+    
+    if (shouldTrack.current) {
+      requestRef.current = requestAnimationFrame(detectPose);
+    }
   }, [landmarker, timerDuration, onCaptureTrigger]);
 
   const startCountdown = () => {
@@ -127,10 +135,15 @@ export function usePoseTracker(
   };
 
   const startTracking = useCallback(() => {
-    if (!requestRef.current) detectPose();
+    if (!shouldTrack.current) {
+      shouldTrack.current = true;
+      detectPose();
+    }
   }, [detectPose]);
 
   const stopTracking = useCallback(() => {
+    shouldTrack.current = false;
+    
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
@@ -145,15 +158,10 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // --- THE GHOST FIX ---
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        // Wipe again in next frame just to be sure
-        requestAnimationFrame(() => {
-             ctx?.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
-        });
       }
     }
   }, []);
