@@ -69,7 +69,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
 
-  // --- ZOOM (FIXED) ---
+  // --- ZOOM ---
   const handleZoomChange = (newZoom: number) => {
     const z = Math.min(Math.max(newZoom, zoomCap.min), zoomCap.max);
     setZoom(z);
@@ -78,19 +78,27 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     zoomTimeoutRef.current = setTimeout(() => {
         if (!videoRef.current?.srcObject) return;
         const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
-        
-        // FIX 1: Cast track to 'any' so we can call applyConstraints with 'zoom'
+        // FIX: Cast to any to avoid TS error
         (track as any).applyConstraints({ advanced: [{ zoom: z }] }).catch((e: any) => console.log(e));
     }, 100);
   };
 
-  // --- CAMERA SETUP (FIXED) ---
-  const startCamera = async () => {
+  // --- CAMERA SETUP ---
+  // Modified to accept a specific mode to support instant switching
+  const startCamera = async (overrideMode?: 'user' | 'environment') => {
     try {
-      // FIX 2: Create constraints as 'any' type first to bypass TS check
+      const modeToUse = overrideMode || facingMode;
+
+      // Stop existing stream if running (Important for switching!)
+      if (videoRef.current && videoRef.current.srcObject) {
+         const oldStream = videoRef.current.srcObject as MediaStream;
+         oldStream.getTracks().forEach(track => track.stop());
+      }
+
+      // FIX: Cast constraints to any
       const constraints: any = {
         video: { 
-          facingMode: facingMode, 
+          facingMode: modeToUse, 
           width: { ideal: 1920 }, 
           height: { ideal: 1080 }, 
           zoom: true 
@@ -103,29 +111,36 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         videoRef.current.srcObject = stream;
         videoRef.current.onloadeddata = () => {
           videoRef.current?.play();
-          setCameraStarted(true);
+          setCameraStarted(true); // Ensure UI stays visible
           
           const track = stream.getVideoTracks()[0];
-          // FIX 3: Cast getCapabilities result to 'any'
+          // FIX: Cast capabilities to any
           const caps = (track.getCapabilities() as any) || {};
           if (caps.zoom) {
             setZoomCap({ min: caps.zoom.min, max: caps.zoom.max });
+            setZoom(1); // Reset zoom on switch
           }
         };
       }
     } catch (e) { alert("Camera Error: " + e); }
   };
 
+  // Initial Start
   useEffect(() => {
     if (cameraStarted) startTracking(); else stopTracking();
   }, [cameraStarted, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
-  const switchCamera = () => {
-    setFacingMode(p => p === 'user' ? 'environment' : 'user');
-    setIsMirrored(p => !p);
-    setCameraStarted(false);
-    setTimeout(startCamera, 200);
+  
+  // FIX: Instant Switch Logic
+  const switchCamera = async () => {
+    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newMode);
+    setIsMirrored(newMode === 'user');
+    
+    // Do NOT setCameraStarted(false) here! 
+    // Just restart the stream directly.
+    await startCamera(newMode);
   };
 
   // --- RENDER ---
@@ -165,7 +180,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         {!cameraStarted && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
              <Camera size={64} color="#333" />
-             <button onClick={startCamera} style={startBtn}>Open Camera</button>
+             <button onClick={() => startCamera()} style={startBtn}>Open Camera</button>
              <p style={{color:'#666', fontSize:12}}>Aperture AI Ready</p>
           </div>
         )}
@@ -190,7 +205,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         )}
       </div>
 
-      {/* BOTTOM CONTROLS */}
+      {/* CONTROLS */}
       {cameraStarted && (
         <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
            
