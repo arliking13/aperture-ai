@@ -2,12 +2,26 @@
 import { useState, useEffect } from 'react';
 import { uploadPhoto, analyzeImage, getCloudImages } from './actions';
 import CameraInterface from './components/CameraInterface';
+// 1. Import the Debug Camera
+import DebugCamera from './components/DebugCamera'; 
 
 export default function Home() {
+  // --- DEBUG SWITCH ---
+  // Set this to TRUE to test the AI. Set to FALSE to see your Interface.
+  const DEBUG_MODE = true; 
+  // --------------------
+
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [advice, setAdvice] = useState<string>("");
 
+  // If Debug Mode is ON, we return early and ONLY show the debug tool.
+  // Your original interface code below is safe, just hidden.
+  if (DEBUG_MODE) {
+    return <DebugCamera />;
+  }
+
+  // --- YOUR ORIGINAL APP CODE STARTS HERE ---
   useEffect(() => {
     const loadGallery = async () => {
       const cloudPhotos = await getCloudImages();
@@ -21,14 +35,11 @@ export default function Home() {
     setAdvice("Analyzing...");
 
     try {
-      // 1. Upload
       const photoUrl = await uploadPhoto(base64Image);
       setPhotos(prev => [photoUrl, ...prev]);
-      
-      // 2. Analyze
-      const aiAdvice = await analyzeImage(photoUrl);
-      setAdvice(aiAdvice);
-
+      // AI Disabled for now to prevent errors
+      // const aiAdvice = await analyzeImage(photoUrl);
+      setAdvice("Photo captured!"); 
     } catch (error) {
       alert('Error: ' + error);
       setAdvice("");
@@ -44,13 +55,11 @@ export default function Home() {
     }}>
       <h1 style={{ marginBottom: '20px', color: '#00ff88', letterSpacing: '2px' }}>Aperture AI</h1>
       
-      {/* 1. The Camera Component */}
       <CameraInterface 
         onCapture={handleCapture} 
         isProcessing={uploading} 
       />
 
-      {/* 2. AI Advice Section */}
       {advice && (
         <div style={{
           marginTop: '20px', padding: '15px', background: '#1a1a1a',
@@ -62,7 +71,6 @@ export default function Home() {
         </div>
       )}
       
-      {/* 3. Public Gallery Section */}
       <div style={{ marginTop: '40px', width: '100%', maxWidth: '500px' }}>
         <h3 style={{ 
           borderBottom: '1px solid #333', paddingBottom: '10px',
