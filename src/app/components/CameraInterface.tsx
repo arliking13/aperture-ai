@@ -1,9 +1,45 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2 } from 'lucide-react';
+import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2, FlipHorizontal } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
-import { takeSnapshot } from '../utils/cameraHelpers';
 import { getGeminiAdvice } from '../actions'; 
+
+// Snapshot helper inline
+const takeSnapshot = (video: HTMLVideoElement, format: string, isMirrored: boolean) => {
+    const canvas = document.createElement('canvas');
+    const vidW = video.videoWidth;
+    const vidH = video.videoHeight;
+    let targetW = vidW, targetH = vidH;
+
+    if (format === 'square') {
+      const size = Math.min(vidW, vidH);
+      targetW = size; targetH = size;
+    } else if (format === 'vertical') {
+       targetH = vidH; targetW = targetH * (9/16);
+       if (targetW > vidW) { targetW = vidW; targetH = targetW * (16/9); }
+    } else {
+       targetH = vidH; targetW = targetH * (4/3);
+       if (targetW > vidW) { targetW = vidW; targetH = targetW * (3/4); }
+    }
+
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const startX = (vidW - targetW) / 2;
+    const startY = (vidH - targetH) / 2;
+
+    ctx.save();
+    if (isMirrored) {
+      ctx.translate(targetW, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, startX, startY, targetW, targetH, 0, 0, targetW, targetH);
+    ctx.restore();
+
+    return canvas.toDataURL('image/jpeg', 0.95);
+};
 
 interface CameraInterfaceProps {
   onCapture: (base64Image: string) => void;
@@ -19,7 +55,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
-  const [flashActive, setFlashActive] = useState(false);
   
   const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0); 
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
@@ -31,7 +66,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [advice, setAdvice] = useState<string | null>(null);
   const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
 
-  // --- HELPER: Resize Image for AI (Save Bandwidth/Errors) ---
+  // Resize helper
   const resizeForAI = (base64Str: string, maxWidth = 800): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -39,18 +74,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const scale = maxWidth / img.width;
-        // Only resize if image is bigger than maxWidth
         if (scale >= 1) { resolve(base64Str); return; }
-
         canvas.width = maxWidth;
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.8)); // 80% quality JPG
-        } else {
-            resolve(base64Str);
-        }
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
+        } else { resolve(base64Str); }
       };
     });
   };
@@ -74,9 +105,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       if (!lastPhoto) return;
       setIsLoadingAdvice(true);
       try {
-        // 1. Resize before sending (Critical Fix!)
         const smallImage = await resizeForAI(lastPhoto);
-        // 2. Send to Server
         const tip = await getGeminiAdvice(smallImage); 
         setAdvice(tip);
       } catch (e) {
@@ -86,13 +115,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill } = usePoseTracker(
-    videoRef as React.RefObject<HTMLVideoElement>,
-    canvasRef as React.RefObject<HTMLCanvasElement>,
+  // --- HOOK INTEGRATION (Fixed 4 Arguments) ---
+  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown } = usePoseTracker(
+    videoRef, 
+    canvasRef, 
     performCapture, 
-    timerDuration, 
-    autoCaptureEnabled,
-    autoSessionActive
+    timerDuration || 3 // Default to 3s if timer is 0 in auto mode
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -129,6 +157,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     zoomTimeoutRef.current = setTimeout(() => {
         if (!videoRef.current?.srcObject) return;
         const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
+        // @ts-ignore
         (track as any).applyConstraints({ advanced: [{ zoom: z }] }).catch((e: any) => console.log(e));
     }, 100);
   };
@@ -160,7 +189,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  useEffect(() => { if (cameraStarted) startTracking(); else stopTracking(); }, [cameraStarted, startTracking, stopTracking]);
+  useEffect(() => { 
+      if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
+          startTracking(); 
+      } else {
+          stopTracking();
+      }
+  }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
+
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   const switchCamera = async () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
@@ -174,7 +210,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
       <div id="flash-overlay" style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, opacity: 0, pointerEvents: 'none', transition: 'opacity 0.15s' }} />
 
-      {/* --- VIEWFINDER --- */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format==='square'?'1/1':format==='vertical'?'9/16':'4/3') : 'auto',

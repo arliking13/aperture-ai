@@ -1,42 +1,46 @@
 "use server";
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-export async function getGeminiAdvice(poseDescription: string): Promise<string> {
+export async function getGeminiAdvice(base64Image: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return "Coach: (Check API Key)";
+  if (!key) return "System: API Key Missing";
 
-  const genAI = new GoogleGenerativeAI(key);
-  const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  ];
-
-  const prompt = `You are a friendly posing coach. Based on this data, give ONE short tip (max 10 words).
-  POSE DATA: ${poseDescription}`;
-
-  // --- STRATEGY: TRY MODEL A -> IF FAIL -> TRY MODEL B ---
-  
   try {
-    // 1. Try the fast model first
-    const modelA = genAI.getGenerativeModel({ model: "gemini-2.0-flash", safetySettings });
-    const result = await modelA.generateContent(prompt);
-    return result.response.text().trim();
+    const genAI = new GoogleGenerativeAI(key);
+    
+    // Use gemini-1.5-flash for Vision (it sees images best)
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+      ]
+    });
 
-  } catch (errorA: any) {
-    console.warn("Gemini 2.0 Failed, switching to 1.5...", errorA.message);
+    // Strip the data:image/jpeg;base64 part if present
+    const cleanBase64 = base64Image.includes("base64,") 
+      ? base64Image.split("base64,")[1] 
+      : base64Image;
 
-    try {
-      // 2. Fallback to the stable model (Different Quota Bucket)
-      const modelB = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
-      const result = await modelB.generateContent(prompt);
-      return result.response.text().trim();
+    const prompt = `You are a professional photography coach. 
+    Analyze this selfie/photo visually. 
+    Do NOT say "looking good" or generic praise.
+    Give ONE specific, actionable instruction to improve the photo immediately.
+    Focus on: Head tilt, chin position, lighting, or angle.
+    Keep it under 10 words.`;
 
-    } catch (errorB: any) {
-      console.error("All AI Models Failed:", errorB.message);
-      
-      // 3. If both fail, return a special "RATE_LIMIT" code so the UI knows to wait
-      if (errorB.message.includes("429")) return "RATE_LIMIT";
-      return "Looking good!";
-    }
+    const result = await model.generateContent([
+      prompt,
+      { inlineData: { data: cleanBase64, mimeType: "image/jpeg" } }
+    ]);
+    
+    return result.response.text() || "Adjust your angle slightly.";
+
+  } catch (error: any) {
+    console.error("AI Vision Error:", error.message);
+    if (error.message.includes("429")) return "Too fast! Wait a moment.";
+    return "Could not analyze photo.";
   }
 }
