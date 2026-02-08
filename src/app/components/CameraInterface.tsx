@@ -4,6 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
+// ... Snapshot helper stays the same ...
 const takeSnapshot = (video: HTMLVideoElement, format: string, isMirrored: boolean) => {
     const canvas = document.createElement('canvas');
     const vidW = video.videoWidth;
@@ -227,10 +228,11 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         <video ref={videoRef} autoPlay playsInline muted 
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
-        {/* --- NUCLEAR OPTION: The 'key' forces a fresh canvas on every toggle --- */}
+        
+        {/* --- ADDED KEY FIX: Forces canvas destruction on toggle --- */}
         <canvas 
           ref={canvasRef} 
-          key={autoCaptureEnabled ? 'auto' : 'manual'}
+          key={autoSessionActive ? 'active' : 'idle'}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
