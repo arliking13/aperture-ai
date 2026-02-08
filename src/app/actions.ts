@@ -2,14 +2,8 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- DELETE THIS BLOCK ---
-// cloudinary.config({
-//   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-//   api_key: process.env.CLOUDINARY_API_KEY,
-//   api_secret: process.env.CLOUDINARY_API_SECRET,
-// });
-// -------------------------
-// The SDK automatically reads CLOUDINARY_URL from your Vercel Environment Variables.
+// Cloudinary automatically connects using your CLOUDINARY_URL environment variable.
+// DO NOT add a manual cloudinary.config() block here, or it will break.
 
 // 1. Upload Function
 export async function uploadPhoto(base64Image: string): Promise<string> {
@@ -24,19 +18,44 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// 2. Fetch Gallery Function (For Judges)
+// 2. Fetch Gallery (With 1-Hour Auto-Delete)
 export async function getCloudImages() {
   try {
-    // Search for all images in your folder
+    // Get the last 50 photos
     const result = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
-      .max_results(30)
+      .max_results(50)
       .execute();
 
-    // Return just the URLs
-    const urls = result.resources.map((file: any) => file.secure_url);
-    return urls;
+    const now = Date.now();
+    const oneHour = 60 * 60 * 1000; // 1 Hour in milliseconds
+    
+    const validUrls: string[] = [];
+    const idsToDelete: string[] = [];
+
+    // Filter photos
+    for (const file of result.resources) {
+      const fileTime = new Date(file.created_at).getTime();
+      const age = now - fileTime;
+
+      if (age > oneHour) {
+        // If older than 1 hour, mark for deletion
+        idsToDelete.push(file.public_id);
+      } else {
+        // If fresh, keep it
+        validUrls.push(file.secure_url);
+      }
+    }
+
+    // Delete the old ones from the cloud immediately
+    if (idsToDelete.length > 0) {
+      // We don't await this so it doesn't slow down the user
+      cloudinary.api.delete_resources(idsToDelete);
+      console.log(`Cleaned up ${idsToDelete.length} expired photos.`);
+    }
+
+    return validUrls;
   } catch (error) {
     console.error("Error fetching images:", error);
     return [];
@@ -49,7 +68,6 @@ export async function analyzeImage(imageUrl: string) {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    // Fetch the image to pass to Gemini
     const imageResp = await fetch(imageUrl);
     const imageBuffer = await imageResp.arrayBuffer();
     
