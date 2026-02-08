@@ -2,12 +2,14 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Cloudinary auto-configures from CLOUDINARY_URL environment variable
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// --- DELETE THIS BLOCK ---
+// cloudinary.config({
+//   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+//   api_key: process.env.CLOUDINARY_API_KEY,
+//   api_secret: process.env.CLOUDINARY_API_SECRET,
+// });
+// -------------------------
+// The SDK automatically reads CLOUDINARY_URL from your Vercel Environment Variables.
 
 // 1. Upload Function
 export async function uploadPhoto(base64Image: string): Promise<string> {
@@ -25,7 +27,7 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
 // 2. Fetch Gallery Function (For Judges)
 export async function getCloudImages() {
   try {
-    // Search for all images in your folder, sorted by newest first
+    // Search for all images in your folder
     const result = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
@@ -44,7 +46,6 @@ export async function getCloudImages() {
 // 3. AI Analysis Function
 export async function analyzeImage(imageUrl: string) {
   try {
-    // Make sure GEMINI_API_KEY is in your Vercel Environment Variables
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
