@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES ---
+// --- STYLES MOVED TO TOP ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -119,6 +119,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
+  // --- CONNECT 4-ARG HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
@@ -192,7 +193,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC: Only run AI if Auto Mode is ON. Otherwise, kill it. ---
+  // --- LOGIC: Start only if Auto Mode is ON. Stop otherwise. ---
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
