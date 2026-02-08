@@ -15,6 +15,11 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
+  // -- Optimization Refs --
+  // These keep track of the zoom commands so we don't crash the camera
+  const isApplyingZoom = useRef(false);
+  const pendingZoom = useRef<number | null>(null);
+  
   const [cameraStarted, setCameraStarted] = useState(false);
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
@@ -31,14 +36,13 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
     const targetMode = modeOverride || facingMode;
     
-    // Stop any existing streams first
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
     }
 
     try {
-      // 1. Get the camera stream (Standard constraints only)
+      // 1. Get the camera stream
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: targetMode,
@@ -53,10 +57,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           videoRef.current?.play();
           setCameraStarted(true);
           
-          // 2. Check for Zoom Capabilities (Using ts-ignore because it's new)
+          // 2. Check for Zoom Capabilities
           const track = stream.getVideoTracks()[0];
           
-          // @ts-ignore: getCapabilities might not be in TS definition yet
+          // @ts-ignore
           if ('getCapabilities' in track) {
             // @ts-ignore
             const capabilities = track.getCapabilities();
@@ -78,20 +82,47 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
   };
 
+  // --- OPTIMIZED ZOOM HANDLER ---
   const handleZoomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newZoom = parseFloat(e.target.value);
+    
+    // 1. Update UI immediately (so slider feels fast)
     setZoom(newZoom);
     
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      const track = stream.getVideoTracks()[0];
-      
-      // 3. Apply Zoom (Using ts-ignore)
-      // @ts-ignore
-      if ('applyConstraints' in track) {
-         // @ts-ignore
-         track.applyConstraints({ advanced: [{ zoom: newZoom }] });
+    // 2. Store this value as the "latest target"
+    pendingZoom.current = newZoom;
+
+    // 3. Trigger the hardware update loop if it's not already running
+    if (!isApplyingZoom.current) {
+      applyZoomToHardware();
+    }
+  };
+
+  const applyZoomToHardware = async () => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    
+    const stream = videoRef.current.srcObject as MediaStream;
+    const track = stream.getVideoTracks()[0];
+    // @ts-ignore
+    if (!track.applyConstraints) return;
+
+    isApplyingZoom.current = true;
+
+    try {
+      // Keep processing until we catch up to the user's latest drag
+      while (pendingZoom.current !== null) {
+        // Grab the latest value and clear the pending slot
+        const zoomToApply = pendingZoom.current;
+        pendingZoom.current = null;
+
+        // Apply it to the hardware
+        // @ts-ignore
+        await track.applyConstraints({ advanced: [{ zoom: zoomToApply }] });
       }
+    } catch (err) {
+      console.error("Zoom error:", err);
+    } finally {
+      isApplyingZoom.current = false;
     }
   };
 
@@ -113,7 +144,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     const vidH = video.videoHeight;
     let targetW, targetH;
     
-    // Crop Logic based on selected Format
+    // Crop Logic
     if (format === 'square') {
       const size = Math.min(vidW, vidH);
       targetW = size;
@@ -240,7 +271,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           }} 
         />
         
-        {/* ZOOM INDICATOR (Overlay) */}
+        {/* ZOOM INDICATOR */}
         {cameraStarted && zoomCap && (
           <div style={{
             position: 'absolute', bottom: '20px', 
@@ -256,7 +287,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       {cameraStarted && (
         <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
           
-          {/* ZOOM SLIDER (Only if supported) */}
+          {/* ZOOM SLIDER */}
           {zoomCap && (
             <div style={{ width: '80%', maxWidth: '300px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span style={{ fontSize: '12px', color: '#888' }}>1x</span>
@@ -273,7 +304,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             </div>
           )}
 
-          {/* iOS SHUTTER BUTTON */}
+          {/* SHUTTER BUTTON */}
           <button 
             onClick={captureFrame} 
             disabled={isProcessing}
