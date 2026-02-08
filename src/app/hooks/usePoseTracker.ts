@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
+// --- CONFIGURATION ---
+const MOVEMENT_THRESHOLD = 0.005; // Lower = You must be more still (Stricter)
+const FRAMES_TO_LOCK = 60;        // Higher = AI waits longer before triggering (~2 seconds)
+
 // Helper for motion math
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
-  const keyPoints = [0, 11, 12, 23, 24]; 
+  const keyPoints = [0, 11, 12, 23, 24]; // Nose, Shoulders, Hips
   let total = 0;
   keyPoints.forEach(i => {
     if (current[i] && previous[i]) {
@@ -42,7 +46,7 @@ export function usePoseTracker(
         const marker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-            delegate: "GPU" // Switch to "CPU" if iPhone crashes
+            delegate: "GPU" // Change to "CPU" if iPhone crashes
           },
           runningMode: "VIDEO",
           numPoses: 1
@@ -77,22 +81,29 @@ export function usePoseTracker(
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
         
-        // Draw Red Skeleton
+        // Draw Skeleton (Green when locked, Red when moving)
+        const isLocked = stillFrames.current > (FRAMES_TO_LOCK / 2); // Visual feedback halfway through
+        const color = isLocked ? '#00ff88' : 'rgba(255, 255, 255, 0.5)';
+        
         const drawingUtils = new DrawingUtils(ctx);
-        drawingUtils.drawLandmarks(landmarks, { radius: 3, color: 'red', fillColor: 'white' });
-        drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: 'red', lineWidth: 2 });
+        drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
+        drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
 
         // Motion Logic
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
-        if (movement < 0.008) {
+        if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current++;
-            if (!isStill) setIsStill(true);
             
-            if (stillFrames.current === 30 && !countdownTimer.current) {
+            // Only show "Hold Still" text if they have been still for a moment (15 frames)
+            if (stillFrames.current > 15 && !isStill) setIsStill(true);
+            
+            // TRIGGER: Must hold for FRAMES_TO_LOCK (e.g. 60 frames / 2 seconds)
+            if (stillFrames.current === FRAMES_TO_LOCK && !countdownTimer.current) {
               startCountdown();
             }
         } else {
+            // MOVED: Cancel everything immediately
             if (countdownTimer.current) {
               clearInterval(countdownTimer.current);
               countdownTimer.current = null;
@@ -111,6 +122,9 @@ export function usePoseTracker(
     let count = timerDuration;
     setCountdown(count);
     
+    // Safety clear
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+
     countdownTimer.current = setInterval(() => {
       count--;
       if (count <= 0) {
