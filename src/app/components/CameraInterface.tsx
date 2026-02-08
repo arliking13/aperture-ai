@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES (Moved to top to prevent errors) ---
+// --- STYLES MOVED TO TOP (Fixes Red Lines) ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -119,12 +119,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- CONNECT TO 4-ARG HOOK ---
+  // --- CONNECT 5 ARGUMENTS ---
+  // shouldCapture = autoSessionActive (This allows lines to show when not recording)
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
-    timerDuration || 3
+    timerDuration || 3,
+    autoSessionActive 
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -193,14 +195,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC FIX: When Auto is enabled + Session Active -> Start. Else -> Stop. ---
+  // --- LOGIC FIX: If Auto is ON, START TRACKING (Preview Mode) ---
   useEffect(() => { 
-      if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
+      if (cameraStarted && autoCaptureEnabled) {
           startTracking(); 
       } else {
-          stopTracking(); // Triggers the double-wipe
+          stopTracking(); // This will kill the ghost lines
       }
-  }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
+  }, [cameraStarted, autoCaptureEnabled, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   const switchCamera = async () => {
@@ -255,7 +257,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              border: stability > 0 ? '1px solid #00ff88' : '1px solid transparent',
              transition: 'all 0.2s'
            }}>
-             {stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start"}
+             {/* If not recording, show PREVIEW instructions */}
+             {!autoSessionActive ? "Auto Standby (Press Shutter)" : (stability > 0 ? `Stabilizing... ${stability}%` : "Hold Pose")}
            </div>
         )}
 

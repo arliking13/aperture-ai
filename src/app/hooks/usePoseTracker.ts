@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
-// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; // 2 Seconds
+const FRAMES_TO_LOCK = 60; // ~2 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -23,7 +22,8 @@ export function usePoseTracker(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   onCaptureTrigger: () => void,
-  timerDuration: number
+  timerDuration: number,
+  shouldCapture: boolean // <--- 5th Argument: Controls the TIMER only
 ) {
   const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
@@ -34,9 +34,6 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  
-  // THE FIX: This ref acts faster than React state
-  const shouldTrackRef = useRef(false);
 
   useEffect(() => {
     async function loadAI() {
@@ -62,9 +59,6 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = useCallback(() => {
-    // GATEKEEPER 1: Stop immediately if turned off
-    if (!shouldTrackRef.current) return;
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -74,23 +68,18 @@ export function usePoseTracker(
     }
 
     const results = landmarker.detectForVideo(video, performance.now());
-    
-    // GATEKEEPER 2: Check again right before drawing (Crucial for Ghost Lines)
-    if (!shouldTrackRef.current) {
-        // If we were told to stop mid-calculation, wipe and exit.
-        const ctx = canvas.getContext('2d');
-        ctx?.clearRect(0, 0, canvas.width, canvas.height);
-        return;
-    }
-
     const ctx = canvas.getContext('2d');
+    
     if (ctx) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
-        const movement = calculateMovement(landmarks, previousLandmarks.current);
         
+        // 1. Calculate Stability
+        const movement = calculateMovement(landmarks, previousLandmarks.current);
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
@@ -101,17 +90,22 @@ export function usePoseTracker(
               setCountdown(null);
             }
         }
-
+        
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
-        if (stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
+        // 2. TRIGGER: Only if shouldCapture is TRUE
+        if (shouldCapture && stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
            startCountdown();
         }
 
+        // 3. VISUALS: White (Standby) vs Green (Active)
         const isStable = percent > 50;
-        const color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
-        
+        let color = 'rgba(255, 255, 255, 0.4)'; 
+        if (shouldCapture) {
+            color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.8)';
+        }
+
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -119,12 +113,8 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    
-    // Only continue loop if still allowed
-    if (shouldTrackRef.current) {
-        requestRef.current = requestAnimationFrame(detectPose);
-    }
-  }, [landmarker, timerDuration, onCaptureTrigger]);
+    requestRef.current = requestAnimationFrame(detectPose);
+  }, [landmarker, timerDuration, onCaptureTrigger, shouldCapture]);
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -146,40 +136,35 @@ export function usePoseTracker(
   };
 
   const startTracking = useCallback(() => {
-    if (!shouldTrackRef.current) {
-        shouldTrackRef.current = true;
-        detectPose();
-    }
+    if (!requestRef.current) detectPose();
   }, [detectPose]);
 
   const stopTracking = useCallback(() => {
-    // 1. HARD STOP
-    shouldTrackRef.current = false;
-    
-    // 2. Kill Loops
+    // Stop Loop
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
+    // Stop Timer
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
       countdownTimer.current = null;
     }
-
+    
     setStability(0);
     setCountdown(null);
     stillFrames.current = 0;
 
-    // 3. FORCE WIPE
+    // THE GHOST FIX: Clear Canvas Instantly
     if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        // Double wipe next frame just in case
-        requestAnimationFrame(() => {
-             ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
-        });
-      }
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            // Safety double-wipe
+            requestAnimationFrame(() => {
+                 ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+            });
+        }
     }
   }, []);
 

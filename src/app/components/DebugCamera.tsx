@@ -36,11 +36,13 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
+  // Pass 5 args. shouldCapture = true means debugging countdown works.
   const { isAiReady, startTracking, stopTracking, isStill, countdown, stability } = usePoseTracker(
     videoRef,
     canvasRef,
     () => addLog("📸 SNAPSHOT TRIGGERED!"), 
-    3
+    3,
+    true
   );
 
   useEffect(() => {
