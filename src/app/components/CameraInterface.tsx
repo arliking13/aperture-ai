@@ -227,7 +227,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         <video ref={videoRef} autoPlay playsInline muted 
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
-        <canvas ref={canvasRef} 
+        {/* --- NUCLEAR OPTION: The 'key' forces a fresh canvas on every toggle --- */}
+        <canvas 
+          ref={canvasRef} 
+          key={autoCaptureEnabled ? 'auto' : 'manual'}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
@@ -239,7 +242,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* STATUS PILL */}
         {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
            <div style={{
              position: 'absolute', top: 20,
@@ -330,7 +332,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   );
 }
 
-// STYLES RESTORED
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };

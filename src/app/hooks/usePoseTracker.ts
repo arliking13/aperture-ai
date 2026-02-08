@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; // ~2 Seconds
+const FRAMES_TO_LOCK = 60; 
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -33,7 +33,9 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  const shouldTrack = useRef(false); // The Kill Switch
+  
+  // NEW: Hard kill switch
+  const shouldTrack = useRef(false);
 
   useEffect(() => {
     async function loadAI() {
@@ -59,7 +61,7 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = useCallback(() => {
-    // Check 1: Should we even start?
+    // 1. HARD STOP: Check if we are still allowed to track
     if (!shouldTrack.current) return;
 
     const video = videoRef.current;
@@ -70,15 +72,11 @@ export function usePoseTracker(
       return;
     }
 
-    // HEAVY CALCULATION HAPPENS HERE
     const results = landmarker.detectForVideo(video, performance.now());
-    
-    // Check 2: GATEKEEPER - Did the user click 'Stop' while we were thinking?
-    // If yes, STOP HERE. Do not draw.
-    if (!shouldTrack.current) return; 
-
     const ctx = canvas.getContext('2d');
+    
     if (ctx) {
+      // 2. Clear canvas first
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
@@ -103,8 +101,9 @@ export function usePoseTracker(
            startCountdown();
         }
 
-        // Draw
-        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        const isStable = percent > 50;
+        const color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -113,6 +112,7 @@ export function usePoseTracker(
       }
     }
     
+    // 3. Continue only if switch is still ON
     if (shouldTrack.current) {
       requestRef.current = requestAnimationFrame(detectPose);
     }
@@ -145,16 +145,14 @@ export function usePoseTracker(
   }, [detectPose]);
 
   const stopTracking = useCallback(() => {
-    // 1. Flip the switch immediately
+    // Hard switch off
     shouldTrack.current = false;
     
-    // 2. Cancel next frame
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
     
-    // 3. Clear Countdown
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
       countdownTimer.current = null;
@@ -164,20 +162,10 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // 4. FORCE CLEAR CANVAS (Wipes any existing lines)
+    // Final canvas wipe
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        
-        // Double-tap clear (just in case a frame slipped through)
-        requestAnimationFrame(() => {
-             if (canvasRef.current) {
-                const ctx2 = canvasRef.current.getContext('2d');
-                ctx2?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-             }
-        });
-      }
+      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
   }, []);
 
