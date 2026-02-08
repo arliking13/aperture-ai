@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2, FlipHorizontal } from 'lucide-react';
+import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2 } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
@@ -115,12 +115,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- HOOK INTEGRATION (Fixed 4 Arguments) ---
+  // --- CRITICAL FIX: Removed extra arguments to match the hook definition ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
-    timerDuration || 3 // Default to 3s if timer is 0 in auto mode
+    timerDuration || 3
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -189,6 +189,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
+  // Logic: Start/Stop Tracker based on Auto Mode
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 

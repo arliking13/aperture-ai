@@ -8,9 +8,10 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
   try {
     const genAI = new GoogleGenerativeAI(key);
     
-    // Use gemini-1.5-flash for Vision (it sees images best)
+    // FIX: Switched back to 2.0 because your logs prove 1.5 doesn't exist for you.
+    // 2.0 works, it just has a rate limit.
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -19,17 +20,15 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
       ]
     });
 
-    // Strip the data:image/jpeg;base64 part if present
+    // Clean the Base64 string
     const cleanBase64 = base64Image.includes("base64,") 
       ? base64Image.split("base64,")[1] 
       : base64Image;
 
     const prompt = `You are a professional photography coach. 
-    Analyze this selfie/photo visually. 
-    Do NOT say "looking good" or generic praise.
-    Give ONE specific, actionable instruction to improve the photo immediately.
-    Focus on: Head tilt, chin position, lighting, or angle.
-    Keep it under 10 words.`;
+    Analyze this photo visually. 
+    Give ONE specific instruction to improve the pose, angle, or lighting. 
+    Max 10 words.`;
 
     const result = await model.generateContent([
       prompt,
@@ -40,7 +39,11 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
 
   } catch (error: any) {
     console.error("AI Vision Error:", error.message);
-    if (error.message.includes("429")) return "Too fast! Wait a moment.";
+    
+    // Handle the specific errors you are seeing
+    if (error.message.includes("429")) return "Quota full. Wait 60s.";
+    if (error.message.includes("404")) return "Error: Model not found.";
+    
     return "Could not analyze photo.";
   }
 }
