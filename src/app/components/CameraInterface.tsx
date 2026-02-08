@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff } from 'lucide-react';
+import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff, Square } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { takeSnapshot } from '../utils/cameraHelpers';
 
@@ -10,69 +10,51 @@ interface CameraInterfaceProps {
 }
 
 export default function CameraInterface({ onCapture, isProcessing }: CameraInterfaceProps) {
-  // --- REFS ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- STATE ---
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
   const [flashActive, setFlashActive] = useState(false);
   
-  // --- SETTINGS ---
-  const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0);
+  const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(3);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
+  const [autoSessionActive, setAutoSessionActive] = useState(false);
 
-  // --- TRIGGER STATE ---
-  // This is the key fix: We only let AI snap when this is true
-  const [waitingForAi, setWaitingForAi] = useState(false);
-
-  // --- CAPTURE ---
   const performCapture = useCallback(() => {
     if (!videoRef.current) return;
-    
-    // 1. Reset AI Wait State (Stop shooting!)
-    setWaitingForAi(false);
-
-    // 2. Flash & Snap
     setFlashActive(true);
     setTimeout(() => setFlashActive(false), 150);
     const image = takeSnapshot(videoRef.current, format, isMirrored);
     if (image) onCapture(image);
   }, [format, isMirrored, onCapture]);
 
-  // --- AI HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
     performCapture, 
     timerDuration, 
-    waitingForAi // <--- FIX: Hook only runs logic when this is true
+    autoCaptureEnabled,
+    autoSessionActive
   );
 
-  // --- SHUTTER BUTTON HANDLER ---
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
   const handleShutterPress = () => {
     if (isProcessing) return;
-
-    // AUTO MODE: Just tell AI to start looking
     if (autoCaptureEnabled) {
-        setWaitingForAi(true);
+        setAutoSessionActive(!autoSessionActive);
         return;
     }
-
-    // MANUAL MODE: Standard timer logic
     if (timerDuration === 0) {
       performCapture();
       return;
     }
-    
     setManualCountdown(timerDuration);
     let count = timerDuration;
     const interval = setInterval(() => {
@@ -85,13 +67,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }, 1000);
   };
 
+  useEffect(() => { setAutoSessionActive(false); }, [autoCaptureEnabled]);
   const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
 
-  // --- ZOOM ---
   const handleZoomChange = (newZoom: number) => {
     const z = Math.min(Math.max(newZoom, zoomCap.min), zoomCap.max);
     setZoom(z);
-
     if (zoomTimeoutRef.current) clearTimeout(zoomTimeoutRef.current);
     zoomTimeoutRef.current = setTimeout(() => {
         if (!videoRef.current?.srcObject) return;
@@ -100,7 +81,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }, 100);
   };
 
-  // --- CAMERA SETUP ---
   const startCamera = async (overrideMode?: 'user' | 'environment') => {
     try {
       const modeToUse = overrideMode || facingMode;
@@ -109,8 +89,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
          oldStream.getTracks().forEach(track => track.stop());
       }
 
-      const constraints: any = {
-        video: { facingMode: modeToUse, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true }
+      // FIX: Cast the inner object to 'any' to force TypeScript to accept 'zoom'
+      const constraints = {
+        video: { 
+          facingMode: modeToUse, 
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 }, 
+          zoom: true 
+        } as any 
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -130,12 +116,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  useEffect(() => {
-    if (cameraStarted) startTracking(); else stopTracking();
-  }, [cameraStarted, startTracking, stopTracking]);
-
+  useEffect(() => { if (cameraStarted) startTracking(); else stopTracking(); }, [cameraStarted, startTracking, stopTracking]);
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
-  
   const switchCamera = async () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
@@ -143,7 +125,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     await startCamera(newMode);
   };
 
-  // --- RENDER ---
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       {flashActive && <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, animation: 'fadeOut 0.15s', pointerEvents: 'none' }} />}
@@ -198,19 +179,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* AI STATUS OVERLAY */}
         {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
-           <div style={{ 
-              position: 'absolute', top: 20, 
-              background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, 
-              color: '#fff', fontSize: 12, fontWeight: 'bold', 
-              backdropFilter: 'blur(4px)', 
-              border: isStill ? '1px solid #00ff88' : '1px solid transparent',
-              opacity: waitingForAi ? 1 : 0.5 // Fade out if not active
-           }}>
-             {isAiReady ? (
-                waitingForAi ? (isStill ? "Hold Still..." : "Hold pose...") : "Press Shutter to Start"
-             ) : "Loading AI..."}
+           <div style={{ position: 'absolute', top: 20, background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, color: '#fff', fontSize: 12, fontWeight: 'bold', backdropFilter: 'blur(4px)', border: (isStill && autoSessionActive) ? '1px solid #00ff88' : '1px solid transparent', display: 'flex', alignItems: 'center', gap: 6 }}>
+             {autoSessionActive && <div style={{width:8, height:8, borderRadius:'50%', background:'#ff3b30', animation:'pulse 1s infinite'}} />}
+             {isAiReady ? (autoSessionActive ? (isStill ? "Hold Still..." : "Looking...") : "Press Shutter to Start") : "Loading AI..."}
            </div>
         )}
       </div>
@@ -218,7 +190,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       {/* CONTROLS */}
       {cameraStarted && (
         <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-           
            <div style={{ display: 'flex', gap: 20, marginBottom: 20, background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: 25 }}>
             {['vertical', 'album', 'square'].map(f => (
               <span key={f} onClick={() => setFormat(f as any)} 
@@ -230,50 +201,21 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
           <div style={{ width: '100%', maxWidth: 350, marginBottom: 25, display: 'flex', flexDirection: 'column', gap: 10 }}>
              <div style={{ display: 'flex', justifyContent: 'center', gap: 15 }}>
-                {[0.5, 1, 2, 3].map(z => (
-                   (z >= zoomCap.min && z <= zoomCap.max) && (
-                     <button key={z} onClick={() => handleZoomChange(z)}
-                        style={{
-                           width: 35, height: 35, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.3)',
-                           background: zoom === z ? '#ffd700' : 'rgba(0,0,0,0.5)', 
-                           color: zoom === z ? '#000' : '#fff', fontSize: 11, fontWeight: 'bold'
-                        }}>
-                        {z}x
-                     </button>
-                   )
-                ))}
+                {[0.5, 1, 2, 3].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
+                     <button key={z} onClick={() => handleZoomChange(z)} style={{ width: 35, height: 35, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.3)', background: zoom === z ? '#ffd700' : 'rgba(0,0,0,0.5)', color: zoom === z ? '#000' : '#fff', fontSize: 11, fontWeight: 'bold' }}>{z}x</button>
+                ) ))}
              </div>
-             
              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 10, color: '#666' }}>{zoomCap.min}x</span>
-                <input type="range" min={zoomCap.min} max={zoomCap.max} step={0.1} value={zoom} 
-                  onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-                  style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab', height: 4 }}
-                />
+                <input type="range" min={zoomCap.min} max={zoomCap.max} step={0.1} value={zoom} onChange={(e) => handleZoomChange(parseFloat(e.target.value))} style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab', height: 4 }} />
                 <span style={{ fontSize: 10, color: '#666' }}>{zoomCap.max}x</span>
              </div>
           </div>
 
           <button onClick={handleShutterPress} disabled={isProcessing}
-             style={{ 
-               width: 80, height: 80, borderRadius: '50%', 
-               background: isProcessing?'#333':'#fff', 
-               border: waitingForAi ? '4px solid #00ff88' : '4px solid rgba(0,0,0,0)', 
-               outline: '4px solid #fff', outlineOffset: 4, 
-               cursor: isProcessing?'wait':'pointer', 
-               transform: isProcessing?'scale(0.9)':'scale(1)',
-               position: 'relative'
-             }}
+             style={{ width: 80, height: 80, borderRadius: '50%', background: isProcessing ? '#333' : (autoCaptureEnabled && autoSessionActive ? '#ff3b30' : '#fff'), border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: 4, cursor: isProcessing?'wait':'pointer', transform: isProcessing?'scale(0.9)':'scale(1)', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.3s' }}
           >
-             {/* Show "Time" or "AI" icon inside button */}
-             {timerDuration > 0 && !isProcessing && !waitingForAi && (
-                <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: 20, color: '#000', fontWeight: 'bold' }}>
-                   {timerDuration}
-                </span>
-             )}
-             {waitingForAi && (
-                 <div style={{ position: 'absolute', inset: 10, borderRadius: '50%', background: '#00ff88', animation: 'pulse 1s infinite' }} />
-             )}
+             {autoCaptureEnabled && autoSessionActive ? <Square fill="#fff" size={32} /> : ((timerDuration > 0 && !isProcessing) && <span style={{ fontSize: 20, color: '#000', fontWeight: 'bold' }}>{timerDuration}</span>)}
           </button>
         </div>
       )}

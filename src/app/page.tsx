@@ -1,103 +1,89 @@
 "use client";
-import { useState, useEffect } from 'react';
-import { uploadPhoto, analyzeImage, getCloudImages } from './actions';
+import { useState, useCallback } from 'react';
 import CameraInterface from './components/CameraInterface';
-// 1. Import the Debug Camera
-import DebugCamera from './components/DebugCamera'; 
+
+// Define a simple Photo type
+interface Photo {
+  id: string;
+  url: string;
+  timestamp: number;
+}
 
 export default function Home() {
-  // --- DEBUG SWITCH ---
-  // Set this to TRUE to test the AI. Set to FALSE to see your Interface.
-  const DEBUG_MODE = false; 
-  // --------------------
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [advice, setAdvice] = useState<string>("");
+  // --- CAPTURE HANDLER ---
+  const handleCapture = useCallback((base64Image: string) => {
+    setIsProcessing(true);
 
-  // If Debug Mode is ON, we return early and ONLY show the debug tool.
-  // Your original interface code below is safe, just hidden.
-  if (DEBUG_MODE) {
-    return <DebugCamera />;
-  }
-
-  // --- YOUR ORIGINAL APP CODE STARTS HERE ---
-  useEffect(() => {
-    const loadGallery = async () => {
-      const cloudPhotos = await getCloudImages();
-      setPhotos(cloudPhotos);
+    // Create a unique ID for this photo
+    const newPhoto: Photo = {
+      id: crypto.randomUUID(), // or Date.now().toString()
+      url: base64Image,
+      timestamp: Date.now(),
     };
-    loadGallery();
+
+    // 1. Add to Gallery
+    setPhotos(prev => [newPhoto, ...prev]);
+
+    // Simulate save delay (optional)
+    setTimeout(() => setIsProcessing(false), 500);
+
+    // 2. SCHEDULE DELETION (5 Minutes = 300,000 ms)
+    setTimeout(() => {
+      setPhotos((currentPhotos) => 
+        currentPhotos.filter((p) => p.id !== newPhoto.id)
+      );
+      console.log("Photo auto-deleted due to timeout");
+    }, 5 * 60 * 1000); 
+
   }, []);
 
-  const handleCapture = async (base64Image: string) => {
-    setUploading(true);
-    setAdvice("Analyzing...");
-
-    try {
-      const photoUrl = await uploadPhoto(base64Image);
-      setPhotos(prev => [photoUrl, ...prev]);
-      // AI Disabled for now to prevent errors
-      // const aiAdvice = await analyzeImage(photoUrl);
-      setAdvice("Photo captured!"); 
-    } catch (error) {
-      alert('Error: ' + error);
-      setAdvice("");
-    }
-    setUploading(false);
-  };
-
   return (
-    <main style={{
-      background: '#000', minHeight: '100vh', display: 'flex',
-      flexDirection: 'column', alignItems: 'center', padding: '20px',
-      color: '#fff', fontFamily: 'system-ui, sans-serif'
+    <main style={{ 
+      minHeight: '100vh', 
+      background: '#111', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      alignItems: 'center', 
+      padding: '20px' 
     }}>
-      <h1 style={{ marginBottom: '20px', color: '#00ff88', letterSpacing: '2px' }}>Aperture AI</h1>
       
+      {/* HEADER */}
+      <h1 style={{ color: '#fff', marginBottom: '20px', fontFamily: 'sans-serif' }}>
+        APERTURE AI
+      </h1>
+
+      {/* CAMERA MODULE */}
       <CameraInterface 
         onCapture={handleCapture} 
-        isProcessing={uploading} 
+        isProcessing={isProcessing} 
       />
 
-      {advice && (
-        <div style={{
-          marginTop: '20px', padding: '15px', background: '#1a1a1a',
-          border: '1px solid #00ff88', borderRadius: '15px',
-          maxWidth: '500px', width: '100%'
-        }}>
-          <h3 style={{ color: '#00ff88', margin: '0 0 10px 0', fontSize: '1.1rem' }}>🤖 AI Coach Says:</h3>
-          <p style={{ margin: 0, lineHeight: '1.5' }}>{advice}</p>
+      {/* GALLERY (Visual Proof) */}
+      {photos.length > 0 && (
+        <div style={{ marginTop: '40px', width: '100%', maxWidth: '600px' }}>
+          <h3 style={{ color: '#666', fontSize: '14px', marginBottom: '10px', textAlign: 'center' }}>
+            SESSION GALLERY (Auto-clear in 5m)
+          </h3>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', 
+            gap: '10px' 
+          }}>
+            {photos.map(photo => (
+              <div key={photo.id} style={{ position: 'relative', aspectRatio: '9/16' }}>
+                <img 
+                  src={photo.url} 
+                  alt="Capture" 
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333' }} 
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
-      
-      <div style={{ marginTop: '40px', width: '100%', maxWidth: '500px' }}>
-        <h3 style={{ 
-          borderBottom: '1px solid #333', paddingBottom: '10px',
-          marginBottom: '5px', color: '#888', fontSize: '0.9rem',
-          textTransform: 'uppercase', letterSpacing: '1px'
-        }}>
-          Cloud Gallery (Public)
-        </h3>
-        <p style={{ color: '#666', fontSize: '0.8rem', marginBottom: '15px', fontStyle: 'italic' }}>
-          ⚠️ Photos are automatically deleted after 10 minutes.
-        </p>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-          {photos.map((url, i) => (
-            <a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
-              <img 
-                src={url} 
-                alt={`Photo ${i}`} 
-                style={{ 
-                  width: '100%', aspectRatio: '1/1', objectFit: 'cover',
-                  borderRadius: '10px', border: '1px solid #333',
-                }} 
-              />
-            </a>
-          ))}
-        </div>
-      </div>
     </main>
   );
 }

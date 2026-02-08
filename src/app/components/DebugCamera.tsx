@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
-import { usePoseTracker } from '../hooks/usePoseTracker'; // Make sure file exists at this path!
+import { usePoseTracker } from '../hooks/usePoseTracker';
 
 export default function DebugCamera() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -31,11 +31,14 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
-  // FIX: Cast refs to specific types to satisfy TypeScript strict mode
+  // FIX: Added "true" as the 6th argument (isSessionActive)
   const { isAiReady, startTracking, isStill, countdown } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
-    () => addLog("📸 SNAP!"), 3, true
+    () => addLog("📸 SNAP!"), 
+    3, 
+    true, // isAutoEnabled
+    true  // isSessionActive (Always active for debug mode)
   );
 
   useEffect(() => {
@@ -52,6 +55,7 @@ export default function DebugCamera() {
       <div style={{ position: 'absolute', top: 50, left: 10, right: 10, background: 'rgba(0,0,0,0.8)', padding: '15px', pointerEvents: 'none' }}>
         <div>AI: {isAiReady ? "✅ READY" : "⏳ LOADING..."}</div>
         <div>Move: {isStill ? "✋ HOLD" : "🏃 MOVING"}</div>
+        <div>Count: {countdown ?? "--"}</div>
         <div style={{ marginTop: 15, fontSize: 12, color: '#ccc' }}>
           {logs.map((log, i) => <div key={i}>{'>'} {log}</div>)}
         </div>
