@@ -2,6 +2,7 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
+// Configure Cloudinary with Vercel Environment Variables
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -9,7 +10,7 @@ cloudinary.config({
   secure: true,
 });
 
-// --- AI COACHING ---
+// --- 1. AI COACHING (Gemini 2.0 Flash) ---
 export async function getGeminiAdvice(base64Image: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return "System: API Key Missing";
@@ -26,8 +27,11 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
       ]
     });
 
+    // Clean the base64 string
     const cleanBase64 = base64Image.includes("base64,") ? base64Image.split("base64,")[1] : base64Image;
-    const prompt = `Act as a minimalist photography coach. Focus on centering and lighting. Give ONE imperative command to improve the shot. Max 8 words.`;
+    
+    // Updated Prompt for specific, actionable advice
+    const prompt = `Act as a strict photography coach. Analyze this photo for lighting, framing, and pose. Give ONE imperative command to improve the shot. Max 10 words.`;
 
     const result = await model.generateContent([
       prompt,
@@ -36,18 +40,19 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
     return result.response.text() || "Adjust your angle.";
 
   } catch (error: any) {
-    if (error.message?.includes("429")) return "Quota full. Wait 60s.";
+    if (error.message && error.message.includes("429")) return "Quota full. Wait 60s.";
+    console.error("Gemini Error:", error);
     return "Could not analyze photo.";
   }
 }
 
-// --- UPLOAD LOGIC ---
+// --- 2. UPLOAD LOGIC ---
 export async function uploadPhoto(base64Image: string): Promise<string> {
   try {
     const result = await cloudinary.uploader.upload(base64Image, {
       folder: 'aperture-ai',
       resource_type: 'image',
-      tags: ['temporary_capture']
+      tags: ['temporary_capture'] // Tagging for easier bulk management if needed
     });
     return result.secure_url;
   } catch (error) {
@@ -56,10 +61,10 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// --- DELETION LOGIC (FIXED) ---
+// --- 3. RETRIEVAL & CLEANUP LOGIC (THE FIX) ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // 1. Fetch recent images
+    // A. Fetch recent images (Limit 50 to catch backlog)
     const { resources } = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
@@ -71,30 +76,25 @@ export async function getCloudImages(): Promise<string[]> {
     const validImages: string[] = [];
     const expiredIds: string[] = [];
 
-    // 2. Filter & Detect Expired
+    // B. Filter: Separate Valid vs. Expired
     resources.forEach((file: any) => {
         const createdAt = new Date(file.created_at).getTime();
-        const age = now - createdAt;
-
-        if (age > fiveMinutes) {
+        
+        // If older than 5 mins, mark for deletion
+        if (now - createdAt > fiveMinutes) {
             expiredIds.push(file.public_id);
         } else {
             validImages.push(file.secure_url);
         }
     });
 
-    // 3. EXECUTE DELETION (Parallel & Fast)
+    // C. Execute Deletion (MUST AWAIT THIS for Vercel)
     if (expiredIds.length > 0) {
-        console.log(`Destroying ${expiredIds.length} images...`);
-        
-        // Use Promise.all to delete them all at once using the UPLOADER API (Faster)
-        await Promise.all(
-          expiredIds.map(id => 
-            cloudinary.uploader.destroy(id, { invalidate: true })
-          )
-        );
+        console.log(`Cleaning up ${expiredIds.length} expired images...`);
+        await cloudinary.api.delete_resources(expiredIds);
     }
 
+    // Return only the valid images to the frontend
     return validImages.slice(0, 12);
   } catch (error) {
     console.error("Gallery Error:", error);
