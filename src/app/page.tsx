@@ -6,6 +6,7 @@ import { analyzePoseData } from './actions';
 export default function PosingCoach() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   
   const [poseLandmarker, setPoseLandmarker] = useState<PoseLandmarker | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
@@ -17,17 +18,28 @@ export default function PosingCoach() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isGettingAdvice, setIsGettingAdvice] = useState(false);
   
+  // Smart timer states
+  const [autoTimerEnabled, setAutoTimerEnabled] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [isStill, setIsStill] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  
   const animationFrameRef = useRef<number | undefined>(undefined);
   const currentPoseData = useRef<string>("");
   const speechSynthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  
+  // Motion detection
+  const previousLandmarks = useRef<any[] | null>(null);
+  const stillFrameCount = useRef<number>(0);
+  const countdownInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Get color based on score
   const getScoreColor = (score: number) => {
-    if (score >= 90) return '#00ff00'; // Perfect - Green
-    if (score >= 75) return '#7fff00'; // Great - Yellow-green
-    if (score >= 60) return '#ffff00'; // Good - Yellow
-    if (score >= 40) return '#ff9900'; // Needs work - Orange
-    return '#ff3300'; // Poor - Red
+    if (score >= 90) return '#00ff00';
+    if (score >= 75) return '#7fff00';
+    if (score >= 60) return '#ffff00';
+    if (score >= 40) return '#ff9900';
+    return '#ff3300';
   };
 
   // Speak advice
@@ -53,6 +65,77 @@ export default function PosingCoach() {
     utterance.onend = () => setIsSpeaking(false);
     
     speechSynthesis.speak(utterance);
+  };
+
+  // Calculate movement between poses
+  const calculateMovement = (current: any[], previous: any[]): number => {
+    if (!previous || previous.length !== current.length) return 999;
+    
+    let totalMovement = 0;
+    const keyPoints = [0, 11, 12, 23, 24]; // nose, shoulders, hips
+    
+    keyPoints.forEach(i => {
+      if (current[i] && previous[i]) {
+        const dx = current[i].x - previous[i].x;
+        const dy = current[i].y - previous[i].y;
+        totalMovement += Math.sqrt(dx * dx + dy * dy);
+      }
+    });
+    
+    return totalMovement / keyPoints.length;
+  };
+
+  // Capture photo
+  const capturePhoto = () => {
+    if (!videoRef.current || !captureCanvasRef.current) return;
+    
+    const canvas = captureCanvasRef.current;
+    const video = videoRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) return;
+    
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Save with mirror effect if front camera
+    if (facingMode === "user") {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+    
+    const photoData = canvas.toDataURL('image/jpeg', 0.95);
+    setCapturedPhoto(photoData);
+    
+    // Flash effect
+    if (overlayCanvasRef.current) {
+      const flashCtx = overlayCanvasRef.current.getContext('2d');
+      if (flashCtx) {
+        flashCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        flashCtx.fillRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
+        setTimeout(() => {
+          if (flashCtx) flashCtx.clearRect(0, 0, overlayCanvasRef.current!.width, overlayCanvasRef.current!.height);
+        }, 100);
+      }
+    }
+    
+    // Play shutter sound
+    speakAdvice("Photo captured!");
+    console.log("📸 Photo captured!");
+  };
+
+  // Download photo
+  const downloadPhoto = () => {
+    if (!capturedPhoto) return;
+    
+    const link = document.createElement('a');
+    link.href = capturedPhoto;
+    link.download = `aperture-ai-${Date.now()}.jpg`;
+    link.click();
   };
 
   // Initialize MediaPipe
@@ -85,7 +168,7 @@ export default function PosingCoach() {
     if (speechSynthesis) speechSynthesis.getVoices();
   }, []);
 
-  // FIXED: More accurate and forgiving pose analysis
+  // Pose analysis
   const analyzePoseLocally = (landmarks: any[]) => {
     const nose = landmarks[0];
     const leftShoulder = landmarks[11];
@@ -101,7 +184,6 @@ export default function PosingCoach() {
     let description = "CURRENT POSE:\n";
     let score = 100;
     
-    // Calculate centers
     const shoulderCenter = {
       x: (leftShoulder.x + rightShoulder.x) / 2,
       y: (leftShoulder.y + rightShoulder.y) / 2
@@ -112,75 +194,68 @@ export default function PosingCoach() {
       y: (leftHip.y + rightHip.y) / 2
     };
     
-    // 1. SHOULDER TILT (FIXED: Better calculation)
-    // Use actual Y difference normalized by shoulder width for camera angle independence
+    // Shoulder tilt
     const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
     const shoulderHeightDiff = Math.abs(leftShoulder.y - rightShoulder.y);
     const shoulderTiltRatio = shoulderHeightDiff / shoulderWidth;
-    
-    // Convert to degrees for display (approximate)
     const shoulderTiltDegrees = Math.atan(shoulderTiltRatio) * 180 / Math.PI;
     
-    if (shoulderTiltRatio > 0.15) { // Very tilted (>8.5°)
+    if (shoulderTiltRatio > 0.15) {
       score -= 20;
       const higherSide = leftShoulder.y < rightShoulder.y ? "left" : "right";
       feedback.push(`⚠️ Shoulders tilted ${shoulderTiltDegrees.toFixed(1)}° (${higherSide} higher)`);
-      description += `- Shoulders uneven (${shoulderTiltDegrees.toFixed(1)}° tilt, ${higherSide} higher)\n`;
-    } else if (shoulderTiltRatio > 0.08) { // Slightly tilted (>4.5°)
+      description += `- Shoulders uneven (${shoulderTiltDegrees.toFixed(1)}° tilt)\n`;
+    } else if (shoulderTiltRatio > 0.08) {
       score -= 8;
       feedback.push(`💡 Slight shoulder tilt (${shoulderTiltDegrees.toFixed(1)}°)`);
-      description += `- Slight shoulder tilt (${shoulderTiltDegrees.toFixed(1)}°)\n`;
+      description += `- Slight shoulder tilt\n`;
     } else {
-      feedback.push(`✓ Shoulders level (${shoulderTiltDegrees.toFixed(1)}°)`);
-      description += `- Shoulders level (${shoulderTiltDegrees.toFixed(1)}° - excellent)\n`;
+      feedback.push(`✓ Shoulders level`);
+      description += `- Shoulders level\n`;
     }
     
-    // 2. SPINE ALIGNMENT (FIXED: More forgiving)
+    // Spine alignment
     const spineAngle = Math.atan2(
       hipCenter.y - shoulderCenter.y,
       hipCenter.x - shoulderCenter.x
     ) * 180 / Math.PI;
-    
     const spineDeviation = Math.abs(90 - Math.abs(spineAngle));
     
-    if (spineDeviation > 20) { // Very bad posture
+    if (spineDeviation > 20) {
       score -= 25;
       feedback.push(`⚠️ Back leaning ${spineDeviation.toFixed(1)}°`);
-      description += `- Slouching detected (${spineDeviation.toFixed(1)}° lean)\n`;
-    } else if (spineDeviation > 12) { // Noticeable lean
+      description += `- Slouching detected\n`;
+    } else if (spineDeviation > 12) {
       score -= 12;
-      feedback.push(`💡 Stand more upright (${spineDeviation.toFixed(1)}° lean)`);
-      description += `- Slight forward lean (${spineDeviation.toFixed(1)}°)\n`;
+      feedback.push(`💡 Stand more upright`);
+      description += `- Slight forward lean\n`;
     } else {
-      feedback.push(`✓ Good posture (${spineDeviation.toFixed(1)}° deviation)`);
-      description += `- Posture is straight (${spineDeviation.toFixed(1)}° deviation - good)\n`;
+      feedback.push(`✓ Good posture`);
+      description += `- Posture is straight\n`;
     }
     
-    // 3. HEAD POSITION (More forgiving)
+    // Head position
     const headOffsetX = Math.abs(nose.x - shoulderCenter.x);
-    
-    if (headOffsetX > 0.15) { // Very off-center
+    if (headOffsetX > 0.15) {
       score -= 15;
-      const direction = nose.x > shoulderCenter.x ? "right" : "left";
-      feedback.push(`⚠️ Head leaning ${direction}`);
-      description += `- Head off-center (${(headOffsetX * 100).toFixed(1)}% offset to ${direction})\n`;
-    } else if (headOffsetX > 0.09) { // Slightly off
+      feedback.push(`⚠️ Center head`);
+      description += `- Head off-center\n`;
+    } else if (headOffsetX > 0.09) {
       score -= 7;
       feedback.push(`💡 Center head slightly`);
       description += `- Head slightly off-center\n`;
     } else {
       feedback.push(`✓ Head centered`);
-      description += `- Head centered (good)\n`;
+      description += `- Head centered\n`;
     }
     
-    // 4. CHIN HEIGHT (More forgiving)
+    // Chin height
     const chinHeight = shoulderCenter.y - nose.y;
-    
-    if (chinHeight < 0.10) { // Very low
+    if (chinHeight < 0.10) {
       score -= 12;
       feedback.push(`💡 Lift chin up`);
-      description += `- Chin lowered (could lift)\n`;
-    } else if (chinHeight > 0.30) { // Very high
+      description += `- Chin lowered\n`;
+    } else if (chinHeight > 0.30) {
       score -= 8;
       feedback.push(`💡 Lower chin slightly`);
       description += `- Chin too high\n`;
@@ -189,9 +264,7 @@ export default function PosingCoach() {
       description += `- Chin height good\n`;
     }
     
-    // Cap score
     score = Math.max(0, Math.min(100, score));
-    
     return { feedback, description, score };
   };
 
@@ -212,10 +285,7 @@ export default function PosingCoach() {
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         
         if (results.landmarks && results.landmarks[0]) {
-          // Get feedback and score first
           const { feedback, description, score } = analyzePoseLocally(results.landmarks[0]);
-          
-          // Color based on score
           const color = getScoreColor(score);
           
           const drawingUtils = new DrawingUtils(ctx);
@@ -236,10 +306,55 @@ export default function PosingCoach() {
           currentPoseData.current = description;
           setPoseScore(score);
           
+          // Motion detection for auto-timer
+          if (autoTimerEnabled) {
+            const movement = previousLandmarks.current ? calculateMovement(results.landmarks[0], previousLandmarks.current) : 999;
+            
+            if (movement < 0.01) { // Very still
+              stillFrameCount.current++;
+              setIsStill(true);
+              
+              // Start countdown after being still for 1 second (30 frames at 30fps)
+              if (stillFrameCount.current === 30 && !countdownInterval.current) {
+                setCountdown(3);
+                speakAdvice("Hold still, 3, 2, 1");
+                
+                countdownInterval.current = setInterval(() => {
+                  setCountdown(prev => {
+                    if (prev === null || prev <= 1) {
+                      if (countdownInterval.current) {
+                        clearInterval(countdownInterval.current);
+                        countdownInterval.current = null;
+                      }
+                      capturePhoto();
+                      setCountdown(null);
+                      stillFrameCount.current = 0;
+                      return null;
+                    }
+                    return prev - 1;
+                  });
+                }, 1000);
+              }
+            } else {
+              // Movement detected
+              if (countdownInterval.current) {
+                clearInterval(countdownInterval.current);
+                countdownInterval.current = null;
+              }
+              stillFrameCount.current = 0;
+              setCountdown(null);
+              setIsStill(false);
+            }
+            
+            previousLandmarks.current = results.landmarks[0];
+          }
+          
         } else {
           setLocalFeedback(["No person detected"]);
           currentPoseData.current = "";
           setPoseScore(0);
+          previousLandmarks.current = null;
+          stillFrameCount.current = 0;
         }
       }
     }
@@ -247,7 +362,7 @@ export default function PosingCoach() {
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // Get AI coaching (manual button press)
+  // Get AI coaching
   const getAiCoaching = async () => {
     if (!currentPoseData.current) {
       setCurrentAdvice("I can't see you - step into the frame first");
@@ -259,16 +374,12 @@ export default function PosingCoach() {
     setCurrentAdvice("Analyzing your pose...");
     
     try {
-      console.log("📊 Sending pose data:\n", currentPoseData.current);
       const advice = await analyzePoseData(currentPoseData.current);
-      
-      console.log("💬 AI Coach:", advice);
       setCurrentAdvice(advice);
       speakAdvice(advice);
-      
     } catch (err) {
       console.error("Error:", err);
-      setCurrentAdvice("Oops, something went wrong. Try again in a moment");
+      setCurrentAdvice("Oops, something went wrong");
     } finally {
       setIsGettingAdvice(false);
     }
@@ -304,6 +415,9 @@ export default function PosingCoach() {
       }
       if (animationFrameRef.current !== undefined) {
         cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (countdownInterval.current) {
+        clearInterval(countdownInterval.current);
       }
       if (speechSynthesis) speechSynthesis.cancel();
     };
@@ -401,6 +515,41 @@ export default function PosingCoach() {
         {voiceEnabled ? '🔊 Voice' : '🔇 Mute'}
       </button>
       
+      {/* Auto-Timer Toggle */}
+      <button
+        onClick={() => {
+          setAutoTimerEnabled(!autoTimerEnabled);
+          if (!autoTimerEnabled) {
+            speakAdvice("Smart timer activated - hold still to capture");
+          } else {
+            speakAdvice("Smart timer off");
+            if (countdownInterval.current) {
+              clearInterval(countdownInterval.current);
+              countdownInterval.current = null;
+            }
+            setCountdown(null);
+            stillFrameCount.current = 0;
+          }
+        }}
+        style={{
+          position: 'fixed',
+          top: 120,
+          left: 15,
+          background: autoTimerEnabled ? '#00ff88' : 'rgba(255,255,255,0.1)',
+          color: autoTimerEnabled ? '#000' : '#fff',
+          border: `1px solid ${autoTimerEnabled ? '#00ff88' : 'rgba(255,255,255,0.2)'}`,
+          padding: '8px 15px',
+          borderRadius: '20px',
+          fontSize: '0.7rem',
+          cursor: 'pointer',
+          zIndex: 50,
+          backdropFilter: 'blur(10px)',
+          fontWeight: 'bold'
+        }}
+      >
+        {autoTimerEnabled ? '⏱️ Timer ON' : '⏱️ Timer OFF'}
+      </button>
+      
       {/* Camera View */}
       <div style={{
         position: 'relative',
@@ -439,6 +588,45 @@ export default function PosingCoach() {
             transform: facingMode === "user" ? 'scaleX(-1)' : 'none'
           }}
         />
+        
+        <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
+        
+        {/* Countdown Display */}
+        {countdown !== null && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: '8rem',
+            fontWeight: 'bold',
+            color: '#00ff88',
+            textShadow: '0 0 40px rgba(0,255,136,0.8)',
+            animation: 'countdownPulse 1s infinite',
+            pointerEvents: 'none'
+          }}>
+            {countdown}
+          </div>
+        )}
+        
+        {/* Still Indicator */}
+        {autoTimerEnabled && isStill && countdown === null && (
+          <div style={{
+            position: 'absolute',
+            top: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(0,255,136,0.9)',
+            color: '#000',
+            padding: '8px 20px',
+            borderRadius: '20px',
+            fontSize: '0.8rem',
+            fontWeight: 'bold',
+            zIndex: 20
+          }}>
+            ⏱️ Hold Still...
+          </div>
+        )}
         
         {/* Perfect Pose Indicator */}
         {poseScore >= 90 && (
@@ -502,6 +690,68 @@ export default function PosingCoach() {
           {isGettingAdvice ? '⏳ Analyzing...' : '🎙️ Get AI Advice'}
         </button>
       </div>
+      
+      {/* Photo Preview Modal */}
+      {capturedPhoto && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          background: 'rgba(0,0,0,0.95)',
+          zIndex: 100,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+          gap: '20px'
+        }}>
+          <img 
+            src={capturedPhoto} 
+            alt="Captured" 
+            style={{
+              maxWidth: '90%',
+              maxHeight: '70vh',
+              borderRadius: '20px',
+              boxShadow: '0 10px 50px rgba(0,255,136,0.3)'
+            }}
+          />
+          <div style={{ display: 'flex', gap: '15px' }}>
+            <button
+              onClick={downloadPhoto}
+              style={{
+                background: '#00ff88',
+                color: '#000',
+                border: 'none',
+                padding: '15px 35px',
+                borderRadius: '25px',
+                fontSize: '1rem',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              💾 Download
+            </button>
+            <button
+              onClick={() => setCapturedPhoto(null)}
+              style={{
+                background: 'rgba(255,255,255,0.1)',
+                color: '#fff',
+                border: '1px solid rgba(255,255,255,0.3)',
+                padding: '15px 35px',
+                borderRadius: '25px',
+                fontSize: '1rem',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              ✕ Close
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Real-time Local Feedback */}
       <div style={{
@@ -587,14 +837,18 @@ export default function PosingCoach() {
         fontSize: '0.6rem',
         letterSpacing: '2px'
       }}>
-        APERTURE AI • VOICE COACH
+        APERTURE AI • SMART TIMER
       </p>
       
-      {/* CSS Animation for pulse */}
+      {/* CSS Animations */}
       <style jsx>{`
         @keyframes pulse {
           0%, 100% { transform: translate(-50%, -50%) scale(1); }
           50% { transform: translate(-50%, -50%) scale(1.1); }
+        }
+        @keyframes countdownPulse {
+          0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+          50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.8; }
         }
       `}</style>
     </main>
