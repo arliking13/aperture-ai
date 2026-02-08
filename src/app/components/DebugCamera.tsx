@@ -13,7 +13,6 @@ export default function DebugCamera() {
     console.log(msg);
   };
 
-  // 1. Initialize Camera
   useEffect(() => {
     async function startCam() {
       try {
@@ -37,8 +36,7 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
-  // 2. Connect to the 4-Argument AI Hook
-  const { isAiReady, startTracking, stopTracking, isStill, countdown } = usePoseTracker(
+  const { isAiReady, startTracking, stopTracking, isStill, countdown, stability } = usePoseTracker(
     videoRef,
     canvasRef,
     () => addLog("📸 SNAPSHOT TRIGGERED!"), 
@@ -62,12 +60,10 @@ export default function DebugCamera() {
         playsInline
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
       />
-      
       <canvas 
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
       />
-
       <div style={{
         position: 'absolute', top: 50, left: 10, right: 10,
         background: 'rgba(0,0,0,0.8)', padding: '15px',
@@ -77,18 +73,14 @@ export default function DebugCamera() {
         <h3 style={{ margin: '0 0 10px 0', color: 'white', borderBottom: '1px solid #555', paddingBottom: '5px' }}>
           DEBUG MODE
         </h3>
-        
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '15px' }}>
           <div>AI Ready: <b style={{color: isAiReady ? '#0f0' : '#f00'}}>{isAiReady ? "YES" : "NO"}</b></div>
-          <div>User Still: <b style={{color: isStill ? '#0f0' : '#888'}}>{isStill ? "YES" : "NO"}</b></div>
+          <div>Stable ({stability}%): <b style={{color: isStill ? '#0f0' : '#888'}}>{isStill ? "YES" : "NO"}</b></div>
           <div>Countdown: <b style={{color: countdown !== null ? '#ff0' : '#888'}}>{countdown !== null ? countdown : "-"}</b></div>
         </div>
-
         <div style={{ color: '#aaa', marginBottom: '5px' }}>Latest Logs:</div>
         {logs.map((log, i) => (
-          <div key={i} style={{ borderBottom: '1px solid #222', padding: '2px 0' }}>
-            {i === 0 ? '> ' : '  '}{log}
-          </div>
+          <div key={i} style={{ borderBottom: '1px solid #222', padding: '2px 0' }}>{log}</div>
         ))}
       </div>
     </div>

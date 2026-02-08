@@ -4,7 +4,6 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// Snapshot helper inline
 const takeSnapshot = (video: HTMLVideoElement, format: string, isMirrored: boolean) => {
     const canvas = document.createElement('canvas');
     const vidW = video.videoWidth;
@@ -66,7 +65,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [advice, setAdvice] = useState<string | null>(null);
   const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
 
-  // Resize helper
   const resizeForAI = (base64Str: string, maxWidth = 800): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -102,8 +100,9 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   }, [format, isMirrored, onCapture]);
 
   const handleGetTip = async () => {
-      if (!lastPhoto) return;
+      if (!lastPhoto || isLoadingAdvice) return;
       setIsLoadingAdvice(true);
+      setAdvice(null);
       try {
         const smallImage = await resizeForAI(lastPhoto);
         const tip = await getGeminiAdvice(smallImage); 
@@ -115,8 +114,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- CRITICAL FIX: Removed extra arguments to match the hook definition ---
-  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown } = usePoseTracker(
+  // --- FIXED: 4 Arguments & Destructuring 'stability' for UI feedback ---
+  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
@@ -189,7 +188,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // Logic: Start/Stop Tracker based on Auto Mode
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
@@ -240,6 +238,19 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
                 {activeCountdown}
             </span>
           </div>
+        )}
+
+        {/* --- ADDED: Stability Feedback (So you know it's charging) --- */}
+        {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
+           <div style={{
+             position: 'absolute', top: 20,
+             background: 'rgba(0,0,0,0.6)', padding: '6px 16px', borderRadius: 20,
+             color: '#fff', fontSize: 12, fontWeight: 'bold', backdropFilter: 'blur(4px)',
+             border: stability > 0 ? '1px solid #00ff88' : '1px solid transparent',
+             transition: 'all 0.2s'
+           }}>
+             {stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start"}
+           </div>
         )}
 
         {/* CONTROLS */}
