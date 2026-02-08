@@ -1,48 +1,49 @@
 "use server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-export async function getGeminiAdvice(base64Image: string): Promise<string> {
-  // 1. Check for API Key
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error("❌ ERROR: GEMINI_API_KEY is not set in environment variables.");
-    return "Error: API Key is missing. Check Vercel Settings.";
-  }
-
+// RENAMED: Changed from 'analyzePoseData' to 'getGeminiAdvice' to match your import
+export async function getGeminiAdvice(poseDescription: string): Promise<string> {
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      console.error("API Key missing");
+      return "Coach: (Check API Key)";
+    }
 
-    // 2. Remove header if present (data:image/jpeg;base64,)
-    const base64Data = base64Image.includes(",") 
-      ? base64Image.split(",")[1] 
-      : base64Image;
+    const genAI = new GoogleGenerativeAI(key);
+    
+    // Using 'gemini-2.0-flash' as it worked for you previously
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash", 
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+      ]
+    });
+    
+    const prompt = `You are a friendly, energetic posing coach.
+    Based on this data, give ONE short, specific tip (max 10 words).
+    
+    POSE DATA:
+    ${poseDescription}
+    
+    Examples:
+    "Chin up slightly!"
+    "Relax those shoulders."
+    "Perfect! Hold that!"`;
 
-    const imagePart = {
-      inlineData: {
-        data: base64Data,
-        mimeType: "image/jpeg",
-      },
-    };
-
-    const prompt = `
-      You are a friendly photography coach. Look at this photo.
-      Give ONE specific, short tip to improve it (pose, framing, or light).
-      If it's good, give a nice compliment.
-      Max 15 words.
-    `;
-
-    const result = await model.generateContent([prompt, imagePart]);
-    const response = await result.response;
-    return response.text();
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    
+    return text;
     
   } catch (error: any) {
-    console.error("❌ GEMINI API ERROR:", error.message || error);
+    console.error("AI Error:", error.message);
     
-    // Return the actual error to help you debug
-    if (error.message?.includes("API key")) return "Error: Invalid API Key.";
-    if (error.message?.includes("413")) return "Error: Photo too large.";
+    // Fallback responses if AI fails
+    if (error.message.includes("429")) return "Great pose! Hold it!"; 
+    if (error.message.includes("404")) return "Looking good!";
     
-    return "AI Error: " + (error.message || "Unknown error");
+    return "Hold steady!";
   }
 }
