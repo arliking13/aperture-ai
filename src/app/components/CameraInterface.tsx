@@ -28,7 +28,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
 
-  // --- CAPTURE HANDLER ---
+  // --- CAPTURE ---
   const performCapture = useCallback(() => {
     if (!videoRef.current) return;
     setFlashActive(true);
@@ -42,8 +42,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
     performCapture, 
-    timerDuration === 0 ? 3 : timerDuration, 
-    autoCaptureEnabled // Hook listens to this to stop AI
+    timerDuration, 
+    autoCaptureEnabled
   );
 
   // --- MANUAL SHUTTER ---
@@ -69,7 +69,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
 
-  // --- ZOOM HANDLER (Fixed) ---
+  // --- ZOOM (FIXED) ---
   const handleZoomChange = (newZoom: number) => {
     const z = Math.min(Math.max(newZoom, zoomCap.min), zoomCap.max);
     setZoom(z);
@@ -79,17 +79,22 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         if (!videoRef.current?.srcObject) return;
         const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
         
-        // FIX 1: Cast track to 'any' to allow applyConstraints with zoom
+        // FIX 1: Cast track to 'any' so we can call applyConstraints with 'zoom'
         (track as any).applyConstraints({ advanced: [{ zoom: z }] }).catch((e: any) => console.log(e));
     }, 100);
   };
 
-  // --- CAMERA SETUP ---
+  // --- CAMERA SETUP (FIXED) ---
   const startCamera = async () => {
     try {
-      // FIX 2: Cast constraints to 'any' to bypass "zoom does not exist" error
+      // FIX 2: Create constraints as 'any' type first to bypass TS check
       const constraints: any = {
-        video: { facingMode, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true }
+        video: { 
+          facingMode: facingMode, 
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 }, 
+          zoom: true 
+        }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -101,7 +106,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           setCameraStarted(true);
           
           const track = stream.getVideoTracks()[0];
-          // FIX 3: Cast getCapabilities() result to 'any'
+          // FIX 3: Cast getCapabilities result to 'any'
           const caps = (track.getCapabilities() as any) || {};
           if (caps.zoom) {
             setZoomCap({ min: caps.zoom.min, max: caps.zoom.max });
@@ -185,7 +190,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         )}
       </div>
 
-      {/* CONTROLS */}
+      {/* BOTTOM CONTROLS */}
       {cameraStarted && (
         <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
            

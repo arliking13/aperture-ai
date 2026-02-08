@@ -21,10 +21,29 @@ export function usePoseTracker(
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
   const captureRef = useRef(onCaptureTrigger);
 
-  // Update capture callback ref
+  // Keep capture callback fresh
   useEffect(() => { captureRef.current = onCaptureTrigger; }, [onCaptureTrigger]);
 
-  // 1. Load AI
+  // FIX 1: EMERGENCY STOP if switched to Manual
+  useEffect(() => {
+    if (!isAutoEnabled) {
+        // Kill any active timer immediately
+        if (countdownTimer.current) {
+            clearInterval(countdownTimer.current);
+            countdownTimer.current = null;
+        }
+        setCountdown(null);
+        setIsStill(false);
+        stillFrames.current = 0;
+        
+        // Clear the canvas one last time
+        if (canvasRef.current) {
+            const ctx = canvasRef.current.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+    }
+  }, [isAutoEnabled]);
+
   useEffect(() => {
     async function loadAI() {
       try {
@@ -40,33 +59,21 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  // 2. Detection Loop
   const detectPose = () => {
-    if (!landmarkerRef.current || !videoRef.current || !canvasRef.current || videoRef.current.readyState < 2) {
-      requestRef.current = requestAnimationFrame(detectPose);
-      return;
+    // If Manual Mode, do absolutely nothing (save resources)
+    if (!isAutoEnabled) {
+         requestRef.current = requestAnimationFrame(detectPose);
+         return;
     }
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    if (ctx) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+    if (landmarkerRef.current && videoRef.current && canvasRef.current && videoRef.current.readyState >= 2) {
+      const results = landmarkerRef.current.detectForVideo(videoRef.current, performance.now());
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        canvasRef.current.width = videoRef.current.videoWidth;
+        canvasRef.current.height = videoRef.current.videoHeight;
+        ctx.clearRect(0, 0, videoRef.current.videoWidth, videoRef.current.videoHeight);
         
-        // FIX: If Auto is disabled, just clear canvas and skip logic
-        if (!isAutoEnabled) {
-             ctx.clearRect(0, 0, canvas.width, canvas.height);
-             setIsStill(false);
-             stillFrames.current = 0;
-             requestRef.current = requestAnimationFrame(detectPose);
-             return; 
-        }
-
-        const results = landmarkerRef.current.detectForVideo(video, performance.now());
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
         if (results.landmarks && results.landmarks.length > 0) {
             const landmarks = results.landmarks[0];
             const drawingUtils = new DrawingUtils(ctx);
@@ -76,6 +83,7 @@ export function usePoseTracker(
                 if (calculateMovement(landmarks, previousLandmarks.current) < 0.008) {
                     stillFrames.current++;
                     setIsStill(true);
+                    // 30 frames = ~1 second of holding still required
                     if (stillFrames.current > 30) startCountdown();
                 } else { 
                     stillFrames.current = 0; 
@@ -87,11 +95,20 @@ export function usePoseTracker(
             setIsStill(false); 
             stillFrames.current = 0; 
         }
+      }
     }
     requestRef.current = requestAnimationFrame(detectPose);
   };
 
   const startCountdown = () => {
+    // FIX 2: Handle 0s Timer (Instant Snap)
+    if (timerDuration === 0) {
+        if (captureRef.current) captureRef.current();
+        stillFrames.current = 0; // Reset so we don't spam 60 photos a second
+        return;
+    }
+
+    // Standard Countdown
     let count = timerDuration;
     setCountdown(count);
     countdownTimer.current = setInterval(() => {
@@ -108,7 +125,6 @@ export function usePoseTracker(
 
   const startTracking = () => { if (!requestRef.current) detectPose(); };
   const stopTracking = () => { if (requestRef.current) { cancelAnimationFrame(requestRef.current); requestRef.current = null; } };
-
   useEffect(() => { return () => stopTracking(); }, []);
 
   return { isAiReady, startTracking, stopTracking, countdown, isStill };
