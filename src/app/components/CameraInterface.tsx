@@ -19,21 +19,26 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isMirrored, setIsMirrored] = useState(true);
+  
+  // ZOOM STATES
+  const [zoom, setZoom] = useState(1);
+  const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
 
-  // Auto-start camera on mount
   useEffect(() => {
     // startCamera(); // Uncomment if you want instant start
   }, []);
 
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
     const targetMode = modeOverride || facingMode;
-    // Stop existing tracks if any
+    
+    // Stop any existing streams first
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
     }
 
     try {
+      // 1. Get the camera stream (Standard constraints only)
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: targetMode,
@@ -47,6 +52,25 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play();
           setCameraStarted(true);
+          
+          // 2. Check for Zoom Capabilities (Using ts-ignore because it's new)
+          const track = stream.getVideoTracks()[0];
+          
+          // @ts-ignore: getCapabilities might not be in TS definition yet
+          if ('getCapabilities' in track) {
+            // @ts-ignore
+            const capabilities = track.getCapabilities();
+            
+            // @ts-ignore
+            if (capabilities.zoom) {
+              // @ts-ignore
+              setZoomCap({ min: capabilities.zoom.min, max: capabilities.zoom.max });
+              // @ts-ignore
+              setZoom(capabilities.zoom.min);
+            } else {
+              setZoomCap(null);
+            }
+          }
         };
       }
     } catch (err) {
@@ -54,10 +78,26 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
   };
 
+  const handleZoomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newZoom = parseFloat(e.target.value);
+    setZoom(newZoom);
+    
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      const track = stream.getVideoTracks()[0];
+      
+      // 3. Apply Zoom (Using ts-ignore)
+      // @ts-ignore
+      if ('applyConstraints' in track) {
+         // @ts-ignore
+         track.applyConstraints({ advanced: [{ zoom: newZoom }] });
+      }
+    }
+  };
+
   const switchCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
-    // Auto-mirror logic: Front=True, Back=False
     setIsMirrored(newMode === 'user');
     startCamera(newMode);
   };
@@ -73,7 +113,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     const vidH = video.videoHeight;
     let targetW, targetH;
     
-    // Crop Logic
+    // Crop Logic based on selected Format
     if (format === 'square') {
       const size = Math.min(vidW, vidH);
       targetW = size;
@@ -123,7 +163,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           marginBottom: '20px',
           padding: '0 10px'
         }}>
-          {/* Mirror Toggle */}
           <button 
             onClick={() => setIsMirrored(!isMirrored)}
             style={{
@@ -138,42 +177,16 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             <FlipHorizontal size={20} />
           </button>
 
-          {/* Format Selection (Text style) */}
           <div style={{ 
             display: 'flex', gap: '15px', 
             background: 'rgba(0,0,0,0.5)', padding: '5px 15px', borderRadius: '20px',
             backdropFilter: 'blur(10px)'
           }}>
-            <span 
-              onClick={() => setFormat('vertical')}
-              style={{ 
-                color: format === 'vertical' ? '#ffd700' : '#fff', 
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
-              }}
-            >
-              9:16
-            </span>
-            <span 
-              onClick={() => setFormat('album')}
-              style={{ 
-                color: format === 'album' ? '#ffd700' : '#fff', 
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
-              }}
-            >
-              4:3
-            </span>
-            <span 
-              onClick={() => setFormat('square')}
-              style={{ 
-                color: format === 'square' ? '#ffd700' : '#fff', 
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
-              }}
-            >
-              1:1
-            </span>
+            <span onClick={() => setFormat('vertical')} style={{ color: format === 'vertical' ? '#ffd700' : '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>9:16</span>
+            <span onClick={() => setFormat('album')} style={{ color: format === 'album' ? '#ffd700' : '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>4:3</span>
+            <span onClick={() => setFormat('square')} style={{ color: format === 'square' ? '#ffd700' : '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>1:1</span>
           </div>
 
-           {/* Flip Camera */}
            <button 
             onClick={switchCamera}
             style={{
@@ -202,8 +215,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)',
         display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
-        
-        {/* Start Button (If camera off) */}
         {!cameraStarted && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
             <Camera size={64} color="#333" />
@@ -220,7 +231,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* Video Feed */}
         <video 
           ref={videoRef} autoPlay playsInline muted
           style={{ 
@@ -229,12 +239,40 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             transform: isMirrored ? 'scaleX(-1)' : 'none'
           }} 
         />
+        
+        {/* ZOOM INDICATOR (Overlay) */}
+        {cameraStarted && zoomCap && (
+          <div style={{
+            position: 'absolute', bottom: '20px', 
+            background: 'rgba(0,0,0,0.6)', padding: '5px 12px', borderRadius: '20px',
+            color: '#fff', fontSize: '12px', fontWeight: 'bold', backdropFilter: 'blur(4px)'
+          }}>
+            {zoom.toFixed(1)}x
+          </div>
+        )}
       </div>
 
-      {/* --- BOTTOM CONTROLS (Centered Shutter) --- */}
+      {/* --- BOTTOM CONTROLS --- */}
       {cameraStarted && (
-        <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'center', width: '100%' }}>
+        <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
           
+          {/* ZOOM SLIDER (Only if supported) */}
+          {zoomCap && (
+            <div style={{ width: '80%', maxWidth: '300px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '12px', color: '#888' }}>1x</span>
+              <input 
+                type="range" 
+                min={zoomCap.min} 
+                max={zoomCap.max} 
+                step="0.1" 
+                value={zoom} 
+                onChange={handleZoomChange}
+                style={{ flex: 1, accentColor: '#ffd700' }}
+              />
+              <span style={{ fontSize: '12px', color: '#888' }}>{zoomCap.max}x</span>
+            </div>
+          )}
+
           {/* iOS SHUTTER BUTTON */}
           <button 
             onClick={captureFrame} 
@@ -243,8 +281,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
               width: '72px', height: '72px',
               borderRadius: '50%',
               background: isProcessing ? '#ccc' : '#fff',
-              border: '4px solid rgba(0,0,0,0)', // Invisible border for spacing
-              outline: '4px solid #fff', // Outer ring
+              border: '4px solid rgba(0,0,0,0)',
+              outline: '4px solid #fff',
               outlineOffset: '4px',
               cursor: isProcessing ? 'wait' : 'pointer',
               transition: 'transform 0.1s',
