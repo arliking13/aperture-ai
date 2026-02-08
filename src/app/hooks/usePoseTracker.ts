@@ -3,7 +3,7 @@ import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-
 
 // --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; // ~2 Seconds
+const FRAMES_TO_LOCK = 60; // 2 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -34,8 +34,10 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // THE FIX: This ref acts faster than React state
+  const shouldTrackRef = useRef(false);
 
-  // 1. Load AI
   useEffect(() => {
     async function loadAI() {
       try {
@@ -59,8 +61,10 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  // 2. Detection Loop
   const detectPose = useCallback(() => {
+    // GATEKEEPER 1: Stop immediately if turned off
+    if (!shouldTrackRef.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -70,11 +74,17 @@ export function usePoseTracker(
     }
 
     const results = landmarker.detectForVideo(video, performance.now());
-    const ctx = canvas.getContext('2d');
     
+    // GATEKEEPER 2: Check again right before drawing (Crucial for Ghost Lines)
+    if (!shouldTrackRef.current) {
+        // If we were told to stop mid-calculation, wipe and exit.
+        const ctx = canvas.getContext('2d');
+        ctx?.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
     if (ctx) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
@@ -109,7 +119,11 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    requestRef.current = requestAnimationFrame(detectPose);
+    
+    // Only continue loop if still allowed
+    if (shouldTrackRef.current) {
+        requestRef.current = requestAnimationFrame(detectPose);
+    }
   }, [landmarker, timerDuration, onCaptureTrigger]);
 
   const startCountdown = () => {
@@ -132,36 +146,36 @@ export function usePoseTracker(
   };
 
   const startTracking = useCallback(() => {
-    if (!requestRef.current) detectPose();
+    if (!shouldTrackRef.current) {
+        shouldTrackRef.current = true;
+        detectPose();
+    }
   }, [detectPose]);
 
-  // --- THE FIX: Wipe the canvas when stopping ---
   const stopTracking = useCallback(() => {
-    // 1. Kill the loop
+    // 1. HARD STOP
+    shouldTrackRef.current = false;
+    
+    // 2. Kill Loops
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
-    
-    // 2. Kill the timer
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
       countdownTimer.current = null;
     }
 
-    // 3. Reset State
     setStability(0);
     setCountdown(null);
     stillFrames.current = 0;
 
-    // 4. INSTANT WIPE (This removes the ghost lines)
+    // 3. FORCE WIPE
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
-        // Clear immediately
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        
-        // Clear again on next frame just to be safe
+        // Double wipe next frame just in case
         requestAnimationFrame(() => {
              ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
         });

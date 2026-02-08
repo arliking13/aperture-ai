@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES DEFINED HERE TO FIX ERRORS ---
+// --- STYLES (Moved to top to prevent errors) ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -193,12 +193,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC: Active only when Recording + Auto is On ---
+  // --- LOGIC FIX: When Auto is enabled + Session Active -> Start. Else -> Stop. ---
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
       } else {
-          stopTracking(); // <--- This now calls the WIPE command
+          stopTracking(); // Triggers the double-wipe
       }
   }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
 
