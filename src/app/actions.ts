@@ -1,85 +1,36 @@
 "use server";
-import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Cloudinary auto-configures from CLOUDINARY_URL environment variable
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-// 1. Upload Function
-export async function uploadPhoto(base64Image: string): Promise<string> {
+export async function getGeminiAdvice(base64Image: string): Promise<string> {
   try {
-    const result = await cloudinary.uploader.upload(base64Image, {
-      folder: 'aperture-ai',
-    });
-    return result.secure_url;
-  } catch (error: any) {
-    console.error('Upload error:', error);
-    throw new Error('Upload failed: ' + error.message);
-  }
-}
+    if (!process.env.GEMINI_API_KEY) return "Error: API Key missing.";
 
-// 2. Fetch Gallery (With 10-Minute Auto-Delete)
-export async function getCloudImages() {
-  try {
-    const result = await cloudinary.search
-      .expression('folder:aperture-ai')
-      .sort_by('created_at', 'desc')
-      .max_results(50)
-      .execute();
-
-    const now = Date.now();
-    const tenMinutes = 10 * 60 * 1000; // 10 Minutes in milliseconds (CHANGED)
-    
-    const validUrls: string[] = [];
-    const idsToDelete: string[] = [];
-
-    for (const file of result.resources) {
-      const fileTime = new Date(file.created_at).getTime();
-      const age = now - fileTime;
-
-      // Check if older than 10 minutes
-      if (age > tenMinutes) {
-        idsToDelete.push(file.public_id);
-      } else {
-        validUrls.push(file.secure_url);
-      }
-    }
-
-    if (idsToDelete.length > 0) {
-      cloudinary.api.delete_resources(idsToDelete);
-      console.log(`Cleaned up ${idsToDelete.length} expired photos.`);
-    }
-
-    return validUrls;
-  } catch (error) {
-    console.error("Error fetching images:", error);
-    return [];
-  }
-}
-
-// 3. AI Analysis Function
-export async function analyzeImage(imageUrl: string) {
-  try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const imageResp = await fetch(imageUrl);
-    const imageBuffer = await imageResp.arrayBuffer();
-    
-    const prompt = "You are a professional photography coach. Analyze this photo. Give 2 specific, friendly tips to improve the pose, lighting, or angle for the next shot. Keep it under 50 words.";
-
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: Buffer.from(imageBuffer).toString("base64"),
-          mimeType: "image/jpeg",
-        },
+    // Clean the base64 string (remove data:image/jpeg;base64, prefix)
+    const imagePart = {
+      inlineData: {
+        data: base64Image.split(",")[1],
+        mimeType: "image/jpeg",
       },
-    ]);
+    };
 
-    return result.response.text();
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    
+    // The Prompt: Ask for specific, human-like photography advice
+    const prompt = `
+      You are a professional photographer assistant. Analyze this photo specifically for pose, lighting, and composition.
+      Give ONE short, actionable, friendly tip to improve the next shot. 
+      If the photo is perfect, give a unique, non-generic compliment.
+      Keep it under 15 words. Be human, not robotic.
+    `;
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = result.response;
+    return response.text() || "Couldn't analyze that one. Try again!";
+    
   } catch (error) {
-    console.error("AI Error:", error);
-    return "Great shot! (AI Analysis temporarily unavailable)";
+    console.error("Gemini API Error:", error);
+    return "AI is taking a nap. Try again later.";
   }
 }
