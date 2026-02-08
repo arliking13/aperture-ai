@@ -1,9 +1,7 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2 } from 'lucide-react';
-import { usePoseTracker } from '../hooks/usePoseTracker';
-import { takeSnapshot } from '../utils/cameraHelpers';
-import { getGeminiAdvice } from '../actions'; 
+import { useState, useRef, useEffect } from 'react';
+import { Camera, SwitchCamera, FlipHorizontal } from 'lucide-react';
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 interface CameraInterfaceProps {
   onCapture: (base64Image: string) => void;
@@ -11,183 +9,311 @@ interface CameraInterfaceProps {
 }
 
 export default function CameraInterface({ onCapture, isProcessing }: CameraInterfaceProps) {
+  // --- REFS ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const previousLandmarks = useRef<any[] | null>(null);
+  const stillFrames = useRef<number>(0);
+  const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const isApplyingZoom = useRef(false);
+  const pendingZoom = useRef<number | null>(null);
 
+  // --- STATE ---
+  const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
   const [flashActive, setFlashActive] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
   
-  const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0); 
-  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  // Settings & Cooldown
+  const [timerDuration, setTimerDuration] = useState(3);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+  const [cooldown, setCooldown] = useState(0); // New: Rate Limit Timer
+
+  // Zoom State
   const [zoom, setZoom] = useState(1);
-  const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
-  const [autoSessionActive, setAutoSessionActive] = useState(false);
-  
-  const [lastPhoto, setLastPhoto] = useState<string | null>(null);
-  const [advice, setAdvice] = useState<string | null>(null);
-  const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
+  const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
 
-  // --- HELPER: Resize Image for AI (Save Bandwidth/Errors) ---
-  const resizeForAI = (base64Str: string, maxWidth = 800): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = base64Str;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const scale = maxWidth / img.width;
-        // Only resize if image is bigger than maxWidth
-        if (scale >= 1) { resolve(base64Str); return; }
-
-        canvas.width = maxWidth;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.8)); // 80% quality JPG
-        } else {
-            resolve(base64Str);
-        }
-      };
-    });
-  };
-
-  const performCapture = useCallback(() => {
-    if (!videoRef.current) return;
-    const flashDiv = document.getElementById('flash-overlay');
-    if (flashDiv) {
-        flashDiv.style.opacity = '1';
-        setTimeout(() => { flashDiv.style.opacity = '0'; }, 150);
-    }
-    const image = takeSnapshot(videoRef.current, format, isMirrored);
-    if (image) {
-        onCapture(image);
-        setLastPhoto(image);
-        setAdvice(null);
-    }
-  }, [format, isMirrored, onCapture]);
-
-  const handleGetTip = async () => {
-      if (!lastPhoto) return;
-      setIsLoadingAdvice(true);
+  // 1. INITIALIZE AI
+  useEffect(() => {
+    async function loadAI() {
       try {
-        // 1. Resize before sending (Critical Fix!)
-        const smallImage = await resizeForAI(lastPhoto);
-        // 2. Send to Server
-        const tip = await getGeminiAdvice(smallImage); 
-        setAdvice(tip);
-      } catch (e) {
-        setAdvice("Connection error. Try again.");
-      } finally {
-        setIsLoadingAdvice(false);
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
+        const marker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numPoses: 1
+        });
+        setLandmarker(marker);
+      } catch (err) {
+        console.error("AI Load Error:", err);
       }
+    }
+    loadAI();
+  }, []);
+
+  // 2. HELPER: MOVEMENT MATH
+  const calculateMovement = (current: any[], previous: any[] | null): number => {
+    if (!previous) return 999;
+    const keyPoints = [0, 11, 12, 23, 24]; 
+    let total = 0;
+    keyPoints.forEach(i => {
+      if (current[i] && previous[i]) {
+        const dx = current[i].x - previous[i].x;
+        const dy = current[i].y - previous[i].y;
+        total += Math.sqrt(dx * dx + dy * dy);
+      }
+    });
+    return total / keyPoints.length;
   };
 
-  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill } = usePoseTracker(
-    videoRef as React.RefObject<HTMLVideoElement>,
-    canvasRef as React.RefObject<HTMLCanvasElement>,
-    performCapture, 
-    timerDuration, 
-    autoCaptureEnabled,
-    autoSessionActive
-  );
-
-  const [manualCountdown, setManualCountdown] = useState<number | null>(null);
-
-  const handleShutterPress = () => {
-    if (isProcessing) return;
-    if (autoCaptureEnabled) {
-        setAutoSessionActive(!autoSessionActive);
-        return;
-    }
-    if (timerDuration === 0) {
-      performCapture();
+  // 3. DETECTION LOOP
+  const detectPose = () => {
+    if (!landmarker || !videoRef.current || videoRef.current.readyState < 2) {
+      animationFrameRef.current = requestAnimationFrame(detectPose);
       return;
     }
-    setManualCountdown(timerDuration);
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    const startTime = performance.now();
+    const results = landmarker.detectForVideo(video, startTime);
+    
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (results.landmarks && results.landmarks.length > 0) {
+          const landmarks = results.landmarks[0];
+          const drawingUtils = new DrawingUtils(ctx);
+          drawingUtils.drawLandmarks(landmarks, { radius: 3, color: '#00ff88', fillColor: '#000' });
+          drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
+
+          // Motion Logic (Only if not in cooldown)
+          if (autoCaptureEnabled && countdown === null && cooldown === 0 && !isProcessing) {
+            const movement = calculateMovement(landmarks, previousLandmarks.current);
+            if (movement < 0.008) {
+              stillFrames.current++;
+              if (stillFrames.current === 30 && !countdownTimer.current) {
+                startCountdownSequence();
+              }
+            } else {
+              stillFrames.current = 0;
+            }
+            previousLandmarks.current = landmarks;
+          }
+        }
+      }
+    }
+    animationFrameRef.current = requestAnimationFrame(detectPose);
+  };
+
+  // 4. COUNTDOWN SEQUENCE
+  const startCountdownSequence = () => {
     let count = timerDuration;
-    const interval = setInterval(() => {
+    setCountdown(count);
+    
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+
+    countdownTimer.current = setInterval(() => {
       count--;
       if (count <= 0) {
-        clearInterval(interval);
-        setManualCountdown(null);
-        performCapture();
-      } else { setManualCountdown(count); }
+        clearInterval(countdownTimer.current!);
+        countdownTimer.current = null;
+        setCountdown(null);
+        captureFrame();
+        stillFrames.current = 0; 
+      } else {
+        setCountdown(count);
+      }
     }, 1000);
   };
 
-  useEffect(() => { setAutoSessionActive(false); }, [autoCaptureEnabled]);
-  const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
+  // 5. START CAMERA
+  const startCamera = async (modeOverride?: 'user' | 'environment') => {
+    const targetMode = modeOverride || facingMode;
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+    }
 
-  const handleZoomChange = (newZoom: number) => {
-    const z = Math.min(Math.max(newZoom, zoomCap.min), zoomCap.max);
-    setZoom(z);
-    if (zoomTimeoutRef.current) clearTimeout(zoomTimeoutRef.current);
-    zoomTimeoutRef.current = setTimeout(() => {
-        if (!videoRef.current?.srcObject) return;
-        const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
-        (track as any).applyConstraints({ advanced: [{ zoom: z }] }).catch((e: any) => console.log(e));
-    }, 100);
-  };
-
-  const startCamera = async (overrideMode?: 'user' | 'environment') => {
     try {
-      const modeToUse = overrideMode || facingMode;
-      if (videoRef.current && videoRef.current.srcObject) {
-         const oldStream = videoRef.current.srcObject as MediaStream;
-         oldStream.getTracks().forEach(track => track.stop());
-      }
-      const constraints = {
-        video: { facingMode: modeToUse, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true } as any
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: targetMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadeddata = () => {
+        videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play();
           setCameraStarted(true);
+          detectPose(); 
+          
           const track = stream.getVideoTracks()[0];
-          const caps = (track.getCapabilities() as any) || {};
-          if (caps.zoom) {
-            setZoomCap({ min: caps.zoom.min, max: caps.zoom.max });
-            setZoom(1);
+          // @ts-ignore
+          if ('getCapabilities' in track) {
+            // @ts-ignore
+            const capabilities = track.getCapabilities();
+            // @ts-ignore
+            if (capabilities.zoom) {
+              // @ts-ignore
+              setZoomCap({ min: capabilities.zoom.min, max: capabilities.zoom.max });
+              // @ts-ignore
+              setZoom(capabilities.zoom.min);
+            } else {
+              setZoomCap(null);
+            }
           }
         };
       }
-    } catch (e) { alert("Camera Error: " + e); }
+    } catch (err) {
+      alert("Camera Error: " + err);
+    }
   };
 
-  useEffect(() => { if (cameraStarted) startTracking(); else stopTracking(); }, [cameraStarted, startTracking, stopTracking]);
-  const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
-  const switchCamera = async () => {
+  // 6. ZOOM
+  const updateZoom = (newZoom: number) => {
+    setZoom(newZoom);
+    pendingZoom.current = newZoom;
+    if (!isApplyingZoom.current) applyZoomToHardware();
+  };
+
+  const applyZoomToHardware = async () => {
+    if (!videoRef.current?.srcObject) return;
+    const track = (videoRef.current.srcObject as MediaStream).getVideoTracks()[0];
+    // @ts-ignore
+    if (!track.applyConstraints) return;
+
+    isApplyingZoom.current = true;
+    try {
+      while (pendingZoom.current !== null) {
+        const zoomToApply = pendingZoom.current;
+        pendingZoom.current = null;
+        // @ts-ignore
+        await track.applyConstraints({ advanced: [{ zoom: zoomToApply }] });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      isApplyingZoom.current = false;
+      if (pendingZoom.current !== null) applyZoomToHardware();
+    }
+  };
+
+  // 7. CAPTURE & COOLDOWN HANDLING
+  const captureFrame = async () => {
+    if (!videoRef.current) return;
+    
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 150);
+
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas'); 
+    
+    const vidW = video.videoWidth;
+    const vidH = video.videoHeight;
+    let targetW = vidW, targetH = vidH;
+
+    if (format === 'square') {
+      const size = Math.min(vidW, vidH);
+      targetW = size; targetH = size;
+    } else if (format === 'vertical') {
+       targetH = vidH; targetW = targetH * (9/16);
+       if (targetW > vidW) { targetW = vidW; targetH = targetW * (16/9); }
+    } else {
+       targetH = vidH; targetW = targetH * (4/3);
+       if (targetW > vidW) { targetW = vidW; targetH = targetW * (3/4); }
+    }
+
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const startX = (vidW - targetW) / 2;
+    const startY = (vidH - targetH) / 2;
+
+    ctx.save();
+    if (isMirrored) {
+      ctx.translate(targetW, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, startX, startY, targetW, targetH, 0, 0, targetW, targetH);
+    ctx.restore();
+
+    // Call the parent capture function
+    onCapture(canvas.toDataURL('image/jpeg', 0.95));
+  };
+  
+  // Listen for "RATE_LIMIT" signal from parent (You'll need to pass this prop down eventually, 
+  // but for now we manage local cooldown if we get slammed)
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setTimeout(() => setCooldown(c => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [cooldown]);
+
+  const switchCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
     setIsMirrored(newMode === 'user');
-    await startCamera(newMode);
+    startCamera(newMode);
   };
-  const cycleFormat = () => { setFormat(prev => prev === 'vertical' ? 'square' : prev === 'square' ? 'album' : 'vertical'); };
 
+  // --- RENDER ---
   return (
-    <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
-      <div id="flash-overlay" style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, opacity: 0, pointerEvents: 'none', transition: 'opacity 0.15s' }} />
+    <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      
+      {flashActive && (
+        <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, pointerEvents: 'none', animation: 'fadeOut 0.15s ease-out' }} />
+      )}
 
-      {/* --- VIEWFINDER --- */}
+      {/* Top Bar */}
+      {cameraStarted && (
+        <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', marginBottom: '20px', padding: '0 10px' }}>
+          <button onClick={() => setIsMirrored(!isMirrored)} style={btnStyle}>
+             <FlipHorizontal size={20} color={isMirrored ? '#ffd700' : '#fff'} />
+          </button>
+          
+          <button 
+             onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)} 
+             style={{...btnStyle, border: autoCaptureEnabled ? '1px solid #00ff88' : 'none', color: autoCaptureEnabled ? '#00ff88' : '#fff', fontSize: '10px', width: 'auto', padding: '0 15px'}}
+          >
+             {autoCaptureEnabled ? "AUTO ON" : "AUTO OFF"}
+          </button>
+
+          <button onClick={switchCamera} style={btnStyle}>
+             <SwitchCamera size={20} color="#fff" />
+          </button>
+        </div>
+      )}
+
+      {/* Viewfinder */}
       <div style={{
         position: 'relative', width: '100%',
-        aspectRatio: cameraStarted ? (format==='square'?'1/1':format==='vertical'?'9/16':'4/3') : 'auto',
-        minHeight: cameraStarted ? 'auto' : '500px',
-        borderRadius: 24, background: '#000', overflow: 'hidden', 
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: '0 20px 40px rgba(0,0,0,0.5)'
+        aspectRatio: cameraStarted ? (format === 'square' ? '1/1' : format === 'vertical' ? '9/16' : '4/3') : 'auto',
+        minHeight: cameraStarted ? 'auto' : '400px',
+        borderRadius: '24px', background: '#000', overflow: 'hidden', 
+        border: '2px solid #333',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
         {!cameraStarted && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
              <Camera size={64} color="#333" />
-             <button onClick={() => startCamera()} style={startBtn}>Open Camera</button>
-             <p style={{color:'#666', fontSize:12}}>Aperture AI Ready</p>
+             <button onClick={() => startCamera()} style={mainBtnStyle}>Open Camera</button>
+             {!landmarker && <p style={{color: '#666', fontSize: '12px'}}>Loading AI...</p>}
           </div>
         )}
 
@@ -198,92 +324,75 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
-        {activeCountdown !== null && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
-            <span style={{ fontSize: 140, fontWeight: 'bold', color: '#fff', textShadow: '0 5px 20px rgba(0,0,0,0.5)' }}>
-                {activeCountdown}
-            </span>
+        {countdown !== null && (
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '100px', fontWeight: 'bold', color: '#fff', textShadow: '0 0 20px #000' }}>
+            {countdown}
           </div>
         )}
 
-        {/* CONTROLS */}
-        {cameraStarted && (
-            <>
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.5), transparent)' }}>
-                    <button onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
-                        style={{...capsuleBtn, background: 'rgba(0,0,0,0.4)', border: autoCaptureEnabled ? '1px solid #00ff88' : '1px solid rgba(255,255,255,0.2)'}}>
-                        {autoCaptureEnabled ? <Zap size={14} color="#00ff88"/> : <ZapOff size={14} color="#fff"/>}
-                        <span style={{ color: autoCaptureEnabled ? '#00ff88' : '#fff' }}>{autoCaptureEnabled ? "AUTO" : "MANUAL"}</span>
-                    </button>
-                    <button onClick={toggleTimer} style={iconBtn}>
-                        {timerDuration === 0 ? <TimerOff size={20} /> : <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:0, fontSize:10, fontWeight:'bold'}}><Timer size={16} />{timerDuration}s</div>}
-                    </button>
-                </div>
-
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }}>
-                    <div style={{ display: 'flex', gap: 15, marginBottom: 20 }}>
-                        {[0.5, 1, 2].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
-                            <button key={z} onClick={(e) => { e.stopPropagation(); handleZoomChange(z); }} 
-                                style={{ width: 30, height: 30, borderRadius: '50%', background: zoom === z ? 'rgba(255,215,0,0.9)' : 'rgba(0,0,0,0.5)', color: zoom === z ? '#000' : '#fff', fontSize: 10, fontWeight: 'bold', border: '1px solid rgba(255,255,255,0.2)' }}>
-                                {z}x
-                            </button>
-                        ) ))}
-                    </div>
-                    <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px' }}>
-                        <button onClick={cycleFormat} style={iconBtn}>
-                            <Ratio size={20} />
-                            <span style={{fontSize:9, marginTop:2, fontWeight:'bold'}}>{format === 'vertical' ? '9:16' : format === 'square' ? '1:1' : '4:3'}</span>
-                        </button>
-                        <button onClick={handleShutterPress} disabled={isProcessing}
-                            style={{ width: 72, height: 72, borderRadius: '50%', background: isProcessing ? '#333' : (autoCaptureEnabled && autoSessionActive ? '#ff3b30' : '#fff'), border: '4px solid rgba(0,0,0,0.1)', outline: '4px solid #fff', outlineOffset: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {autoCaptureEnabled && autoSessionActive ? <Square fill="#fff" size={24} /> : null}
-                        </button>
-                        <button onClick={switchCamera} style={iconBtn}>
-                            <SwitchCamera size={22} />
-                        </button>
-                    </div>
-                </div>
-            </>
+        {/* Status Badge */}
+        {cameraStarted && autoCaptureEnabled && countdown === null && (
+           <div style={{
+             position: 'absolute', top: '20px', 
+             background: cooldown > 0 ? 'rgba(255, 0, 0, 0.8)' : 'rgba(0,0,0,0.6)', 
+             padding: '6px 12px', borderRadius: '20px',
+             color: '#fff', fontSize: '12px', fontWeight: 'bold', 
+             backdropFilter: 'blur(4px)'
+           }}>
+             {cooldown > 0 
+                ? `Limit Reached: Wait ${cooldown}s` 
+                : isProcessing 
+                   ? "Processing..." 
+                   : landmarker ? "Detecting..." : "Loading AI..."}
+           </div>
         )}
       </div>
 
-      {/* --- AI ADVICE --- */}
-      {lastPhoto && !advice && !isLoadingAdvice && cameraStarted && (
-          <button onClick={handleGetTip} 
-            style={{
-                width: '100%', maxWidth: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                background: 'linear-gradient(135deg, #6366f1, #a855f7)', border: 'none', padding: '14px', borderRadius: '12px',
-                color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)',
-                animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
-            }}>
-            <Sparkles size={18} fill="#fff" />
-            Analyze Last Photo
-          </button>
-      )}
+      {/* Bottom Controls */}
+      {cameraStarted && (
+        <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+           
+           {zoomCap && (
+              <div style={{ width: '100%', maxWidth: '300px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '12px', color: '#666' }}>1x</span>
+                <input type="range" min={zoomCap.min} max={zoomCap.max} step="0.1" value={zoom} 
+                  onChange={(e) => updateZoom(parseFloat(e.target.value))}
+                  style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab' }}
+                />
+                <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.max.toFixed(1)}x</span>
+              </div>
+            )}
 
-      {isLoadingAdvice && (
-          <div style={{ color: '#fff', fontSize: 14, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 10, background: '#222', padding: '10px 20px', borderRadius: '30px' }}>
-             <Loader2 size={18} className="animate-spin" />
-             Consulting AI Photographer...
+           <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: '25px'}}>
+            {['vertical', 'album', 'square'].map(f => (
+              <span key={f} onClick={() => setFormat(f as any)} 
+                style={{ color: format === f ? '#ffd700' : '#888', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>
+                {f === 'vertical' ? '9:16' : f === 'album' ? '4:3' : '1:1'}
+              </span>
+            ))}
           </div>
-      )}
 
-      {advice && (
-        <div style={{ width: '100%', maxWidth: '400px', background: '#1a1a1a', border: '1px solid #333', color: '#eee', padding: '16px', borderRadius: '16px', fontSize: 14, fontWeight: '500', lineHeight: '1.5', display: 'flex', gap: 12, alignItems: 'start', boxShadow: '0 4px 20px rgba(0,0,0,0.5)', animation: 'slideUp 0.3s ease-out', position: 'relative' }}>
-            <Sparkles size={20} color="#ffd700" style={{flexShrink:0, marginTop: 2}} />
-            <div style={{ flex: 1 }}>
-                <span style={{display: 'block', fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1}}>AI Feedback</span>
-                <span>{advice}</span>
-            </div>
-            <button onClick={() => setAdvice(null)} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                <X size={14} color="#fff" />
-            </button>
+          <button 
+             onClick={captureFrame} 
+             disabled={isProcessing || cooldown > 0}
+             style={{
+               width: '72px', height: '72px', borderRadius: '50%',
+               background: cooldown > 0 ? '#ff3333' : (isProcessing ? '#ccc' : '#fff'),
+               border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: '4px',
+               cursor: (isProcessing || cooldown > 0) ? 'not-allowed' : 'pointer',
+               transform: isProcessing ? 'scale(0.9)' : 'scale(1)',
+               display: 'flex', alignItems: 'center', justifyContent: 'center',
+               fontSize: '14px', fontWeight: 'bold', color: 'white'
+             }}
+          >
+            {cooldown > 0 ? `${cooldown}` : ""}
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
-const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
-const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
+// Simple Styles
+const btnStyle = { background: 'rgba(50, 50, 50, 0.5)', border: 'none', width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(10px)' };
+const mainBtnStyle = { background: '#fff', color: '#000', border: 'none', padding: '12px 30px', borderRadius: '30px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' };
