@@ -10,23 +10,17 @@ cloudinary.config({
 
 export async function uploadPhoto(base64Image: string): Promise<string> {
   try {
+    console.log('Starting upload...');
+    
     const result = await cloudinary.uploader.upload(base64Image, {
-      folder: 'aperture-ai', // Organize photos in folder
+      folder: 'aperture-ai',
       resource_type: 'image',
     });
     
-    return result.secure_url; // Return photo URL
-  } catch (error) {
+    console.log('Upload successful:', result.secure_url);
+    return result.secure_url;
+  } catch (error: any) {
     console.error('Upload error:', error);
-    throw new Error('Failed to upload photo');
-  }
-}
-
-export async function deletePhoto(publicId: string): Promise<void> {
-  try {
-    await cloudinary.uploader.destroy(publicId);
-  } catch (error) {
-    console.error('Delete error:', error);
-    throw new Error('Failed to delete photo');
+    throw new Error('Failed to upload: ' + error.message);
   }
 }
