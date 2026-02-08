@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES DEFINED AT TOP TO FIX ERRORS ---
+// --- STYLES DEFINED HERE TO FIX ERRORS ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -119,7 +119,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- RESTORED: 4-Argument Hook Call ---
+  // --- CONNECT TO 4-ARG HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
@@ -151,9 +151,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }, 1000);
   };
 
-  // Turn off recording if we switch modes
   useEffect(() => { setAutoSessionActive(false); }, [autoCaptureEnabled]);
-  
   const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
 
   const handleZoomChange = (newZoom: number) => {
@@ -195,12 +193,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC: Track only when Auto is ON + Recording ---
+  // --- LOGIC: Active only when Recording + Auto is On ---
   useEffect(() => { 
       if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
       } else {
-          stopTracking(); // <--- This will now Trigger the Canvas Wipe
+          stopTracking(); // <--- This now calls the WIPE command
       }
   }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
 

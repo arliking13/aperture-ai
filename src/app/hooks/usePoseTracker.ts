@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 // --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 150; // ~5 Seconds (The setting you liked)
+const FRAMES_TO_LOCK = 60; // ~2 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -60,7 +60,7 @@ export function usePoseTracker(
   }, []);
 
   // 2. Detection Loop
-  const detectPose = () => {
+  const detectPose = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -79,14 +79,12 @@ export function usePoseTracker(
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
-        
-        // Motion Logic
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
-            stillFrames.current = Math.max(0, stillFrames.current - 4);
+            stillFrames.current = Math.max(0, stillFrames.current - 5);
             if (countdownTimer.current) {
               clearInterval(countdownTimer.current);
               countdownTimer.current = null;
@@ -101,7 +99,9 @@ export function usePoseTracker(
            startCountdown();
         }
 
-        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        const isStable = percent > 50;
+        const color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -110,7 +110,7 @@ export function usePoseTracker(
       }
     }
     requestRef.current = requestAnimationFrame(detectPose);
-  };
+  }, [landmarker, timerDuration, onCaptureTrigger]);
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -131,38 +131,45 @@ export function usePoseTracker(
     }, 1000);
   };
 
-  const startTracking = () => {
+  const startTracking = useCallback(() => {
     if (!requestRef.current) detectPose();
-  };
+  }, [detectPose]);
 
-  // --- THE FIX: We added canvas clearing here ---
-  const stopTracking = () => {
-    // 1. Stop the loop
+  // --- THE FIX: Wipe the canvas when stopping ---
+  const stopTracking = useCallback(() => {
+    // 1. Kill the loop
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
     
-    // 2. Clear the canvas (This removes the ghost lines)
-    if (canvasRef.current) {
-        const ctx = canvasRef.current.getContext('2d');
-        if (ctx) {
-            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
+    // 2. Kill the timer
+    if (countdownTimer.current) {
+      clearInterval(countdownTimer.current);
+      countdownTimer.current = null;
     }
 
-    // 3. Reset state
-    if (countdownTimer.current) {
-        clearInterval(countdownTimer.current);
-        countdownTimer.current = null;
-    }
+    // 3. Reset State
     setStability(0);
     setCountdown(null);
     stillFrames.current = 0;
-  };
 
-  useEffect(() => { return () => stopTracking(); }, []);
+    // 4. INSTANT WIPE (This removes the ghost lines)
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        // Clear immediately
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        
+        // Clear again on next frame just to be safe
+        requestAnimationFrame(() => {
+             ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+        });
+      }
+    }
+  }, []);
 
-  // Return the original 4 items + stability/isStill for the UI
+  useEffect(() => { return () => stopTracking(); }, [stopTracking]);
+
   return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
 }
