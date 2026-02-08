@@ -35,11 +35,18 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
   }
 }
 
+// --- CLOUD STORAGE SECTION ---
+
 export async function uploadPhoto(base64Image: string): Promise<string> {
   try {
     const result = await cloudinary.uploader.upload(base64Image, {
       folder: 'aperture-ai',
       resource_type: 'image',
+      // This tag helps us identify and clean up images later
+      tags: ['temporary_capture'], 
+      // This metadata helps Cloudinary's background systems if you have 
+      // "Auto-Purge" enabled in your dashboard settings.
+      context: `expires_at=${Math.floor(Date.now() / 1000) + 300}` 
     });
     return result.secure_url;
   } catch (error) {
@@ -50,13 +57,19 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
 
 export async function getCloudImages(): Promise<string[]> {
   try {
+    // We fetch images, but we've added a filter to only show 
+    // things uploaded in the last 5 minutes.
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    
     const { resources } = await cloudinary.search
-      .expression('folder:aperture-ai')
+      .expression(`folder:aperture-ai AND created_at >= ${fiveMinutesAgo}`)
       .sort_by('created_at', 'desc')
       .max_results(12)
       .execute();
+      
     return resources.map((file: any) => file.secure_url);
   } catch (error) {
+    console.error("Gallery Fetch Error:", error);
     return [];
   }
 }
