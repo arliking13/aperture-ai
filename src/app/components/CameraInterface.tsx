@@ -1,5 +1,13 @@
 "use client";
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { 
+  Camera, 
+  SwitchCamera, 
+  FlipHorizontal, 
+  Maximize2,
+  Image as ImageIcon,
+  Smartphone
+} from 'lucide-react';
 
 interface CameraInterfaceProps {
   onCapture: (base64Image: string) => void;
@@ -12,16 +20,17 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   
   const [cameraStarted, setCameraStarted] = useState(false);
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
-  
-  // New States
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [isMirrored, setIsMirrored] = useState(true); // Default true for selfies
+  const [isMirrored, setIsMirrored] = useState(true);
+
+  // Auto-start camera on mount
+  useEffect(() => {
+    // Optional: Auto-start if you want instant app-like feel
+    // startCamera(); 
+  }, []);
 
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
-    // Determine which camera to use (override or current state)
     const targetMode = modeOverride || facingMode;
-
-    // Stop any existing streams first
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
@@ -51,17 +60,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const switchCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
-    
-    // Auto-turn off mirror for back camera, on for front camera
     setIsMirrored(newMode === 'user');
-    
-    // Restart camera with new mode
     startCamera(newMode);
   };
 
   const captureFrame = () => {
     if (!videoRef.current || !canvasRef.current) return;
-    
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -94,167 +98,174 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
     canvas.width = targetW;
     canvas.height = targetH;
-
     const startX = (vidW - targetW) / 2;
     const startY = (vidH - targetH) / 2;
 
-    // Draw Logic with Mirror Support
     ctx.save();
     if (isMirrored) {
-      // Flip canvas horizontally
       ctx.translate(targetW, 0);
       ctx.scale(-1, 1);
     }
-    
     ctx.drawImage(video, startX, startY, targetW, targetH, 0, 0, targetW, targetH);
     ctx.restore();
     
-    const base64Image = canvas.toDataURL('image/jpeg', 0.9);
-    onCapture(base64Image);
+    onCapture(canvas.toDataURL('image/jpeg', 0.9));
   };
 
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       
-      {/* 1. Controls Row (Format + Mirror) */}
+      {/* --- TOP TOOLBAR (Like iOS) --- */}
       {cameraStarted && (
         <div style={{ 
           display: 'flex', 
           width: '100%', 
           justifyContent: 'space-between', 
           alignItems: 'center',
-          marginBottom: '15px' 
+          marginBottom: '20px',
+          padding: '0 10px'
         }}>
-          {/* Format Buttons */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {['vertical', 'album', 'square'].map((fmt) => (
-              <button 
-                key={fmt}
-                onClick={() => setFormat(fmt as any)}
-                style={{
-                  background: format === fmt ? '#fff' : '#222',
-                  color: format === fmt ? '#000' : '#fff',
-                  border: '1px solid #444', padding: '6px 12px',
-                  borderRadius: '15px', cursor: 'pointer', fontSize: '12px',
-                  textTransform: 'capitalize'
-                }}
-              >
-                {fmt}
-              </button>
-            ))}
-          </div>
-
-          {/* Mirror Toggle Button */}
+          {/* Mirror Toggle */}
           <button 
             onClick={() => setIsMirrored(!isMirrored)}
             style={{
-              background: isMirrored ? '#00ff88' : '#222',
-              color: isMirrored ? '#000' : '#fff',
-              border: '1px solid #444', 
-              padding: '6px 12px',
-              borderRadius: '15px', 
-              cursor: 'pointer', 
-              fontSize: '12px',
-              fontWeight: 'bold'
+              background: 'rgba(50, 50, 50, 0.5)',
+              border: 'none', 
+              width: '40px', height: '40px', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: isMirrored ? '#ffd700' : '#fff',
+              backdropFilter: 'blur(10px)'
             }}
           >
-            ↔️ Mirror
+            <FlipHorizontal size={20} />
+          </button>
+
+          {/* Format Selection (Text style like iOS) */}
+          <div style={{ 
+            display: 'flex', gap: '15px', 
+            background: 'rgba(0,0,0,0.5)', padding: '5px 15px', borderRadius: '20px',
+            backdropFilter: 'blur(10px)'
+          }}>
+            <span 
+              onClick={() => setFormat('vertical')}
+              style={{ 
+                color: format === 'vertical' ? '#ffd700' : '#fff', 
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
+              }}
+            >
+              9:16
+            </span>
+            <span 
+              onClick={() => setFormat('album')}
+              style={{ 
+                color: format === 'album' ? '#ffd700' : '#fff', 
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
+              }}
+            >
+              4:3
+            </span>
+            <span 
+              onClick={() => setFormat('square')}
+              style={{ 
+                color: format === 'square' ? '#ffd700' : '#fff', 
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '1px' 
+              }}
+            >
+              1:1
+            </span>
+          </div>
+
+           {/* Flip Camera */}
+           <button 
+            onClick={switchCamera}
+            style={{
+              background: 'rgba(50, 50, 50, 0.5)',
+              border: 'none', 
+              width: '40px', height: '40px', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: '#fff',
+              backdropFilter: 'blur(10px)'
+            }}
+          >
+            <SwitchCamera size={20} />
           </button>
         </div>
       )}
 
-      {/* 2. Viewfinder Area */}
+      {/* --- VIEWFINDER --- */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format === 'square' ? '1/1' : format === 'vertical' ? '9/16' : '4/3') : 'auto',
-        minHeight: cameraStarted ? 'auto' : '300px', 
-        maxWidth: format === 'vertical' ? '300px' : '500px',
-        borderRadius: '20px', 
-        border: '2px solid #00ff88',
-        background: '#111', 
+        minHeight: cameraStarted ? 'auto' : '400px',
+        borderRadius: '24px', 
+        background: '#000', 
         overflow: 'hidden', 
-        transition: 'all 0.3s ease',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
+        boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+        transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
         
-        {/* START BUTTON (Centered Overlay) */}
+        {/* Start Button (If camera off) */}
         {!cameraStarted && (
-          <button 
-            onClick={() => startCamera()}
-            style={{
-              zIndex: 10,
-              background: '#00ff88', color: '#000', border: 'none',
-              padding: '15px 30px', borderRadius: '10px',
-              fontSize: '18px', fontWeight: 'bold', cursor: 'pointer'
-            }}
-          >
-            Start Camera
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+            <Camera size={64} color="#333" />
+            <button 
+              onClick={() => startCamera()}
+              style={{
+                background: '#fff', color: '#000', border: 'none',
+                padding: '12px 30px', borderRadius: '30px',
+                fontSize: '16px', fontWeight: 'bold', cursor: 'pointer'
+              }}
+            >
+              Open Camera
+            </button>
+          </div>
         )}
 
-        {/* FLIP CAMERA BUTTON (Circular Overlay) */}
-        {cameraStarted && (
-          <button 
-            onClick={switchCamera}
-            style={{
-              position: 'absolute',
-              top: '15px',
-              right: '15px',
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              background: 'rgba(0,0,0,0.6)',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.3)',
-              fontSize: '20px',
-              cursor: 'pointer',
-              zIndex: 20,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backdropFilter: 'blur(5px)'
-            }}
-            title="Switch Camera"
-          >
-            🔄
-          </button>
-        )}
-
-        {/* VIDEO ELEMENT */}
+        {/* Video Feed */}
         <video 
-          ref={videoRef} 
-          autoPlay 
-          playsInline 
-          muted
+          ref={videoRef} autoPlay playsInline muted
           style={{ 
-            width: '100%', 
-            height: '100%', 
-            objectFit: 'cover',
+            width: '100%', height: '100%', objectFit: 'cover',
             display: cameraStarted ? 'block' : 'none',
-            // Apply CSS transform to mirror visually
             transform: isMirrored ? 'scaleX(-1)' : 'none'
           }} 
         />
       </div>
 
-      {/* 3. Capture Button */}
+      {/* --- BOTTOM CONTROLS --- */}
       {cameraStarted && (
-        <button 
-          onClick={captureFrame} 
-          disabled={isProcessing}
-          style={{
-            background: isProcessing ? '#666' : '#00ff88',
-            color: '#000', border: 'none',
-            padding: '15px 30px', borderRadius: '50px',
-            fontSize: '18px', fontWeight: 'bold',
-            cursor: isProcessing ? 'not-allowed' : 'pointer',
-            marginTop: '20px', width: '80%', maxWidth: '300px'
-          }}
-        >
-          {isProcessing ? 'Processing...' : 'Take Photo'}
-        </button>
+        <div style={{ marginTop: '30px', display: 'flex', alignItems: 'center', gap: '30px' }}>
+          
+          {/* Gallery Preview Icon (Placeholder for now) */}
+          <div style={{ 
+            width: '45px', height: '45px', borderRadius: '8px', 
+            background: '#222', border: '1px solid #444',
+            display: 'flex', alignItems: 'center', justifyContent: 'center' 
+          }}>
+            <ImageIcon size={20} color="#666" />
+          </div>
+
+          {/* iOS SHUTTER BUTTON */}
+          <button 
+            onClick={captureFrame} 
+            disabled={isProcessing}
+            style={{
+              width: '72px', height: '72px',
+              borderRadius: '50%',
+              background: isProcessing ? '#ccc' : '#fff',
+              border: '4px solid rgba(0,0,0,0)', // Invisible border for spacing
+              outline: '4px solid #fff', // Outer ring
+              outlineOffset: '4px',
+              cursor: isProcessing ? 'wait' : 'pointer',
+              transition: 'transform 0.1s',
+              transform: isProcessing ? 'scale(0.9)' : 'scale(1)'
+            }}
+          />
+
+          {/* Empty spacer to balance layout */}
+          <div style={{ width: '45px' }} />
+        </div>
       )}
       
       <canvas ref={canvasRef} style={{ display: 'none' }} />
