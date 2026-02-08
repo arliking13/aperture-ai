@@ -33,14 +33,12 @@ export function usePoseTracker(
   useEffect(() => { isSessionRef.current = isSessionActive; }, [isSessionActive]);
   useEffect(() => { captureRef.current = onCaptureTrigger; }, [onCaptureTrigger]);
 
-  // CLEANUP: Ensure canvas is wiped when Auto is disabled
   useEffect(() => {
     if (!isAutoEnabled) {
         if (countdownTimer.current) clearInterval(countdownTimer.current);
         setCountdown(null);
         setIsStill(false);
-        
-        // Force clear canvas immediately
+        // Clean canvas
         if (canvasRef.current) {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -48,7 +46,6 @@ export function usePoseTracker(
     }
   }, [isAutoEnabled]);
 
-  // Load Models
   useEffect(() => {
     async function loadModels() {
       try {
@@ -69,7 +66,7 @@ export function usePoseTracker(
     loadModels();
   }, []);
 
-  // ON-DEMAND ADVICE (Called after capture)
+  // ON-DEMAND ADVICE (Only called when you take a photo)
   const getInstantAdvice = useCallback(async () => {
       if (!videoRef.current || !canvasRef.current || !objectModelRef.current || !landmarkerRef.current) return null;
       
@@ -77,17 +74,17 @@ export function usePoseTracker(
       const ctx = canvasRef.current.getContext('2d');
       if (!ctx) return null;
 
+      // 1. Get Real Data
       const predictions = await objectModelRef.current.detect(video);
       const poseResult = landmarkerRef.current.detectForVideo(video, performance.now());
       const landmarks = poseResult.landmarks ? poseResult.landmarks[0] : [];
       const brightness = analyzeBrightness(ctx, canvasRef.current.width, canvasRef.current.height);
 
+      // 2. Return Analysis
       return generateSmartAdvice(landmarks, predictions, brightness);
   }, []);
 
-  // POSE LOOP
   const detectPose = async () => {
-    // 1. Manual Mode Check: Clear and Exit
     if (!isAutoRef.current) {
          if (canvasRef.current) {
              const ctx = canvasRef.current.getContext('2d');
@@ -123,6 +120,7 @@ export function usePoseTracker(
             }
             previousLandmarks.current = landmarks;
         } else { 
+            // FIX: Removed the "setAdvice('Looking for person')" line here
             setIsStill(false); 
             stillFrames.current = 0; 
         }
