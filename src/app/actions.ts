@@ -2,15 +2,8 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-// Configure Cloudinary with Vercel Environment Variables
-cloudinary.config({
-  cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true,
-});
+cloudinary.config({ secure: true });
 
-// --- 1. AI COACHING (Gemini 2.0 Flash) ---
 export async function getGeminiAdvice(base64Image: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return "System: API Key Missing";
@@ -27,11 +20,8 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
       ]
     });
 
-    // Clean the base64 string
     const cleanBase64 = base64Image.includes("base64,") ? base64Image.split("base64,")[1] : base64Image;
-    
-    // Updated Prompt for specific, actionable advice
-    const prompt = `Act as a strict photography coach. Analyze this photo for lighting, framing, and pose. Give ONE imperative command to improve the shot. Max 10 words.`;
+    const prompt = `Act as a photography coach. Analyze this photo. Give ONE specific instruction to improve the pose, angle, or lighting. Max 10 words.`;
 
     const result = await model.generateContent([
       prompt,
@@ -40,19 +30,17 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
     return result.response.text() || "Adjust your angle.";
 
   } catch (error: any) {
-    if (error.message && error.message.includes("429")) return "Quota full. Wait 60s.";
-    console.error("Gemini Error:", error);
+    if (error.message.includes("429")) return "Quota full. Wait 60s.";
     return "Could not analyze photo.";
   }
 }
 
-// --- 2. UPLOAD LOGIC ---
 export async function uploadPhoto(base64Image: string): Promise<string> {
   try {
     const result = await cloudinary.uploader.upload(base64Image, {
       folder: 'aperture-ai',
       resource_type: 'image',
-      tags: ['temporary_capture'] // Tagging for easier bulk management if needed
+      tags: ['temporary_capture']
     });
     return result.secure_url;
   } catch (error) {
@@ -61,14 +49,13 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// --- 3. RETRIEVAL & CLEANUP LOGIC (THE FIX) ---
+// --- STRICT FILTERING LOGIC ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // A. Fetch recent images (Limit 50 to catch backlog)
     const { resources } = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
-      .max_results(50) 
+      .max_results(30) 
       .execute();
 
     const now = Date.now();
@@ -76,11 +63,10 @@ export async function getCloudImages(): Promise<string[]> {
     const validImages: string[] = [];
     const expiredIds: string[] = [];
 
-    // B. Filter: Separate Valid vs. Expired
+    // Filter Logic
     resources.forEach((file: any) => {
         const createdAt = new Date(file.created_at).getTime();
-        
-        // If older than 5 mins, mark for deletion
+        // If older than 5 mins, add to expired list, DO NOT add to validImages
         if (now - createdAt > fiveMinutes) {
             expiredIds.push(file.public_id);
         } else {
@@ -88,16 +74,13 @@ export async function getCloudImages(): Promise<string[]> {
         }
     });
 
-    // C. Execute Deletion (MUST AWAIT THIS for Vercel)
+    // Attempt cleanup in background (won't block UI)
     if (expiredIds.length > 0) {
-        console.log(`Cleaning up ${expiredIds.length} expired images...`);
-        await cloudinary.api.delete_resources(expiredIds);
+        cloudinary.api.delete_resources(expiredIds).catch(e => console.log("Background delete cleanup"));
     }
 
-    // Return only the valid images to the frontend
     return validImages.slice(0, 12);
   } catch (error) {
-    console.error("Gallery Error:", error);
     return [];
   }
 }
