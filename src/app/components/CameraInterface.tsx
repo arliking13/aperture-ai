@@ -110,8 +110,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       setAdvice(null);
       try {
         const smallImage = await resizeForAI(lastPhoto);
-        const tip = await getGeminiAdvice(smallImage);
-
+        const tip = await getGeminiAdvice(smallImage); 
         setAdvice(tip);
       } catch (e) {
         setAdvice("Connection error. Try again.");
