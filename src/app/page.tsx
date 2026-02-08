@@ -2,15 +2,14 @@
 import { useState, useEffect } from 'react';
 import { uploadPhoto, getCloudImages } from './actions';
 import CameraInterface from './components/CameraInterface';
-import { X, Download } from 'lucide-react'; // Make sure you have lucide-react installed
+import { X, Download } from 'lucide-react'; 
 
 export default function Home() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
-  
-  // NEW: State for the fullscreen modal
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
+  // Load gallery on mount
   useEffect(() => {
     const loadGallery = async () => {
       try {
@@ -26,9 +25,12 @@ export default function Home() {
   const handleCapture = async (base64Image: string) => {
     setUploading(true);
     try {
+      // Optimistic update: Show image immediately
       setPhotos(prev => [base64Image, ...prev]);
+      
       const url = await uploadPhoto(base64Image);
       if (url && url.startsWith('http')) {
+         // Replace base64 with real URL once uploaded
          setPhotos(prev => [url, ...prev.slice(1)]);
       }
     } catch (error) {
@@ -60,7 +62,8 @@ export default function Home() {
           textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', justifyContent: 'space-between'
         }}>
           <span>Cloud Gallery</span>
-          <span style={{fontSize: '0.7rem', color: '#444'}}>Auto-Delete: 5m</span>
+          {/* THE NOTE YOU REQUESTED */}
+          <span style={{fontSize: '0.7rem', color: '#ff3b30', fontWeight: 'bold'}}>Auto-Delete: 5m</span>
         </h3>
         
         {photos.length === 0 ? (
@@ -72,7 +75,7 @@ export default function Home() {
             {photos.map((url, i) => (
               <div 
                 key={i} 
-                onClick={() => setSelectedPhoto(url)} // Open Modal on Click
+                onClick={() => setSelectedPhoto(url)} 
                 style={{ cursor: 'pointer', position: 'relative', aspectRatio: '1/1' }}
               >
                 <img 
@@ -92,7 +95,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* --- FULLSCREEN MODAL (THE FIX) --- */}
+      {/* --- FULLSCREEN MODAL --- */}
       {selectedPhoto && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 10000,
@@ -100,7 +103,6 @@ export default function Home() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           animation: 'fadeIn 0.2s ease-out'
         }}>
-          {/* Close Button */}
           <button 
             onClick={() => setSelectedPhoto(null)}
             style={{
@@ -114,7 +116,6 @@ export default function Home() {
             <X size={24} />
           </button>
 
-          {/* Image */}
           <img 
             src={selectedPhoto} 
             alt="Full view"
@@ -124,7 +125,6 @@ export default function Home() {
             }} 
           />
 
-          {/* Download Button */}
           <a 
             href={selectedPhoto} 
             download={`aperture-photo-${Date.now()}.jpg`}

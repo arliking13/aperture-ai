@@ -49,10 +49,9 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// --- FIXED: AGGRESSIVE FILTERING ---
+// --- STRICT FILTERING LOGIC ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // 1. Fetch images (Get more than needed to account for filtering)
     const { resources } = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
@@ -64,9 +63,10 @@ export async function getCloudImages(): Promise<string[]> {
     const validImages: string[] = [];
     const expiredIds: string[] = [];
 
-    // 2. Strict Filter: If it's old, it DOES NOT go into validImages
+    // Filter Logic
     resources.forEach((file: any) => {
         const createdAt = new Date(file.created_at).getTime();
+        // If older than 5 mins, add to expired list, DO NOT add to validImages
         if (now - createdAt > fiveMinutes) {
             expiredIds.push(file.public_id);
         } else {
@@ -74,15 +74,9 @@ export async function getCloudImages(): Promise<string[]> {
         }
     });
 
-    // 3. Attempt Delete (Best Effort), but don't wait for it
+    // Attempt cleanup in background (won't block UI)
     if (expiredIds.length > 0) {
-        try {
-            await cloudinary.api.delete_resources(expiredIds);
-        } catch (e) {
-            // Even if delete fails (permissions), the user won't see the images
-            // because we filtered them out of 'validImages' above.
-            console.error("Background delete failed (Check Admin API keys):", e);
-        }
+        cloudinary.api.delete_resources(expiredIds).catch(e => console.log("Background delete cleanup"));
     }
 
     return validImages.slice(0, 12);
