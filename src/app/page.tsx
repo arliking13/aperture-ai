@@ -1,89 +1,99 @@
 "use client";
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { uploadPhoto, getCloudImages } from './actions'; // We will fix these next
 import CameraInterface from './components/CameraInterface';
 
-// Define a simple Photo type
-interface Photo {
-  id: string;
-  url: string;
-  timestamp: number;
-}
-
 export default function Home() {
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
 
-  // --- CAPTURE HANDLER ---
-  const handleCapture = useCallback((base64Image: string) => {
-    setIsProcessing(true);
-
-    // Create a unique ID for this photo
-    const newPhoto: Photo = {
-      id: crypto.randomUUID(), // or Date.now().toString()
-      url: base64Image,
-      timestamp: Date.now(),
+  // 1. Load Gallery on Mount
+  useEffect(() => {
+    const loadGallery = async () => {
+      try {
+        const cloudPhotos = await getCloudImages();
+        setPhotos(cloudPhotos);
+      } catch (e) {
+        console.error("Gallery Load Error:", e);
+      }
     };
-
-    // 1. Add to Gallery
-    setPhotos(prev => [newPhoto, ...prev]);
-
-    // Simulate save delay (optional)
-    setTimeout(() => setIsProcessing(false), 500);
-
-    // 2. SCHEDULE DELETION (5 Minutes = 300,000 ms)
-    setTimeout(() => {
-      setPhotos((currentPhotos) => 
-        currentPhotos.filter((p) => p.id !== newPhoto.id)
-      );
-      console.log("Photo auto-deleted due to timeout");
-    }, 5 * 60 * 1000); 
-
+    loadGallery();
   }, []);
 
-  return (
-    <main style={{ 
-      minHeight: '100vh', 
-      background: '#111', 
-      display: 'flex', 
-      flexDirection: 'column', 
-      alignItems: 'center', 
-      padding: '20px' 
-    }}>
+  // 2. Handle Capture (Upload + Update Gallery)
+  const handleCapture = async (base64Image: string) => {
+    setUploading(true);
+    try {
+      // Optimistic update (show immediately)
+      setPhotos(prev => [base64Image, ...prev]);
       
-      {/* HEADER */}
-      <h1 style={{ color: '#fff', marginBottom: '20px', fontFamily: 'sans-serif' }}>
+      // Upload to cloud (if you have the backend set up)
+      const url = await uploadPhoto(base64Image);
+      if (url && url.startsWith('http')) {
+         // Replace base64 with real URL if upload succeeds
+         setPhotos(prev => [url, ...prev.slice(1)]);
+      }
+    } catch (error) {
+      console.error('Upload Error:', error);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <main style={{
+      background: '#000', minHeight: '100vh', display: 'flex',
+      flexDirection: 'column', alignItems: 'center', padding: '20px',
+      color: '#fff', fontFamily: 'system-ui, sans-serif'
+    }}>
+      <h1 style={{ marginBottom: '20px', color: '#00ff88', letterSpacing: '2px', fontWeight: 'bold' }}>
         APERTURE AI
       </h1>
-
-      {/* CAMERA MODULE */}
+      
       <CameraInterface 
         onCapture={handleCapture} 
-        isProcessing={isProcessing} 
+        isProcessing={uploading} 
       />
 
-      {/* GALLERY (Visual Proof) */}
-      {photos.length > 0 && (
-        <div style={{ marginTop: '40px', width: '100%', maxWidth: '600px' }}>
-          <h3 style={{ color: '#666', fontSize: '14px', marginBottom: '10px', textAlign: 'center' }}>
-            SESSION GALLERY (Auto-clear in 5m)
-          </h3>
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', 
-            gap: '10px' 
-          }}>
-            {photos.map(photo => (
-              <div key={photo.id} style={{ position: 'relative', aspectRatio: '9/16' }}>
+      {/* --- RESTORED GALLERY SECTION --- */}
+      <div style={{ marginTop: '40px', width: '100%', maxWidth: '500px' }}>
+        <h3 style={{ 
+          borderBottom: '1px solid #333', paddingBottom: '10px',
+          marginBottom: '15px', color: '#888', fontSize: '0.9rem',
+          textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', justifyContent: 'space-between'
+        }}>
+          <span>Cloud Gallery</span>
+          <span style={{fontSize: '0.7rem', color: '#444'}}>Auto-Delete: 5m</span>
+        </h3>
+        
+        {photos.length === 0 ? (
+          <p style={{ textAlign: 'center', color: '#444', fontStyle: 'italic', padding: '20px' }}>
+            No photos yet. Take a shot!
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+            {photos.map((url, i) => (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', position: 'relative', aspectRatio: '1/1' }}>
                 <img 
-                  src={photo.url} 
-                  alt="Capture" 
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333' }} 
+                  src={url} 
+                  alt={`Photo ${i}`} 
+                  style={{ 
+                    width: '100%', height: '100%', objectFit: 'cover',
+                    borderRadius: '10px', border: '1px solid #333',
+                    animation: 'fadeIn 0.5s ease'
+                  }} 
                 />
-              </div>
+              </a>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
+      
+      <style jsx global>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </main>
   );
 }
