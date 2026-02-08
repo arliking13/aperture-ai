@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 // --- CONFIGURATION ---
-const MOVEMENT_THRESHOLD = 0.006; // Sensitivity
-const FRAMES_TO_LOCK = 150;       // ~5 Seconds @ 30fps
+const MOVEMENT_THRESHOLD = 0.006; 
+const FRAMES_TO_LOCK = 150;       // ~5 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -84,7 +84,6 @@ export function usePoseTracker(
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
-            // Drain slowly instead of instant reset
             stillFrames.current = Math.max(0, stillFrames.current - 4);
             if (countdownTimer.current) {
               clearInterval(countdownTimer.current);
@@ -93,7 +92,7 @@ export function usePoseTracker(
             }
         }
 
-        // Calculate Stats
+        // Stats
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
@@ -138,16 +137,29 @@ export function usePoseTracker(
     if (!requestRef.current) detectPose();
   };
 
+  // --- FIX IS HERE ---
   const stopTracking = () => {
+    // 1. Stop the animation loop
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
+    
+    // 2. CLEAR THE CANVAS (Wipe the lines)
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
+    
+    // 3. Reset internal state
+    setStability(0);
+    stillFrames.current = 0;
   };
 
   useEffect(() => { return () => stopTracking(); }, []);
 
-  // Return stability AND isStill (derived) to satisfy all components
   return { 
     isAiReady, 
     startTracking, 
