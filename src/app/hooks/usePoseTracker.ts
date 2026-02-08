@@ -22,7 +22,9 @@ export function usePoseTracker(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   onCaptureTrigger: () => void,
-  timerDuration: number
+  timerDuration: number,
+  isActive: boolean,      // NEW: Master On/Off Switch
+  shouldCapture: boolean  // NEW: Only true when you want the countdown to run
 ) {
   const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
@@ -33,8 +35,8 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  const shouldTrack = useRef(false);
 
+  // 1. Load AI Model
   useEffect(() => {
     async function loadAI() {
       try {
@@ -58,8 +60,16 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
+  // 2. The Loop
   const detectPose = useCallback(() => {
-    if (!shouldTrack.current) return;
+    // If deactivated, STOP and CLEAR immediately.
+    if (!isActive) {
+        if (canvasRef.current) {
+            const ctx = canvasRef.current.getContext('2d');
+            ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+        return; 
+    }
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -72,21 +82,18 @@ export function usePoseTracker(
     const results = landmarker.detectForVideo(video, performance.now());
     const ctx = canvas.getContext('2d');
     
-    // Safety check again before drawing
-    if (ctx && shouldTrack.current) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+    if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.landmarks && results.landmarks.length > 0) {
         const landmarks = results.landmarks[0];
-        
         const movement = calculateMovement(landmarks, previousLandmarks.current);
         
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
             stillFrames.current = Math.max(0, stillFrames.current - 5);
+            // Cancel timer if moved
             if (countdownTimer.current) {
               clearInterval(countdownTimer.current);
               countdownTimer.current = null;
@@ -97,11 +104,18 @@ export function usePoseTracker(
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
-        if (stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
+        // START COUNTDOWN only if shouldCapture is TRUE
+        if (shouldCapture && stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
            startCountdown();
         }
 
-        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        // Draw Skeleton
+        const isStable = percent > 50;
+        let color = 'rgba(255, 255, 255, 0.3)'; // Default faint white
+        if (shouldCapture) {
+            color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.8)';
+        }
+
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -110,10 +124,9 @@ export function usePoseTracker(
       }
     }
     
-    if (shouldTrack.current) {
-      requestRef.current = requestAnimationFrame(detectPose);
-    }
-  }, [landmarker, timerDuration, onCaptureTrigger]);
+    // Loop
+    requestRef.current = requestAnimationFrame(detectPose);
+  }, [isActive, shouldCapture, landmarker, timerDuration, onCaptureTrigger]);
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -134,39 +147,32 @@ export function usePoseTracker(
     }, 1000);
   };
 
-  const startTracking = useCallback(() => {
-    if (!shouldTrack.current) {
-      shouldTrack.current = true;
-      detectPose();
+  // 3. MASTER CONTROL EFFECT
+  // This automatically starts/stops based on 'isActive' prop
+  useEffect(() => {
+    if (isActive && isAiReady) {
+        // START
+        detectPose();
+    } else {
+        // STOP & CLEAN
+        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        if (countdownTimer.current) clearInterval(countdownTimer.current);
+        setStability(0);
+        setCountdown(null);
+        stillFrames.current = 0;
+        
+        // Force Wipe
+        if (canvasRef.current) {
+            const ctx = canvasRef.current.getContext('2d');
+            ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
     }
-  }, [detectPose]);
-
-  const stopTracking = useCallback(() => {
-    shouldTrack.current = false;
     
-    if (requestRef.current) {
-      cancelAnimationFrame(requestRef.current);
-      requestRef.current = null;
-    }
-    
-    if (countdownTimer.current) {
-      clearInterval(countdownTimer.current);
-      countdownTimer.current = null;
-    }
+    return () => {
+        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        if (countdownTimer.current) clearInterval(countdownTimer.current);
+    };
+  }, [isActive, isAiReady, detectPose]);
 
-    setStability(0);
-    setCountdown(null);
-    stillFrames.current = 0;
-
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      }
-    }
-  }, []);
-
-  useEffect(() => { return () => stopTracking(); }, [stopTracking]);
-
-  return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
+  return { isAiReady, countdown, stability, isStill: stability > 20 };
 }
