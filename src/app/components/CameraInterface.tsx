@@ -1,10 +1,8 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
-import { 
-  Camera, 
-  SwitchCamera, 
-  FlipHorizontal, 
-} from 'lucide-react';
+import { Camera, SwitchCamera, FlipHorizontal } from 'lucide-react';
+import { usePoseDetection } from '../hooks/usePoseDetection';
+import { useStillness } from '../hooks/useStillness';
 
 interface CameraInterfaceProps {
   onCapture: (base64Image: string) => void;
@@ -19,15 +17,81 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const isApplyingZoom = useRef(false);
   const pendingZoom = useRef<number | null>(null);
   
+  // FIX: Initialize with null so TypeScript is happy
+  const requestRef = useRef<number | null>(null);
+  
+  // -- AI & Motion State --
+  const { landmarker, isLoading: isAiLoading } = usePoseDetection();
+  const { checkStillness, isStill, resetStillness } = useStillness();
+  const [timerDuration, setTimerDuration] = useState(3); 
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+
+  // -- Camera State --
   const [cameraStarted, setCameraStarted] = useState(false);
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isMirrored, setIsMirrored] = useState(true);
-  const [flashActive, setFlashActive] = useState(false); // NEW: Flash State
+  const [flashActive, setFlashActive] = useState(false);
   
   // ZOOM STATES
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
+
+  // --- THE AI LOOP ---
+  const animate = () => {
+    if (
+      videoRef.current && 
+      videoRef.current.readyState >= 2 && 
+      landmarker && 
+      autoCaptureEnabled &&
+      countdown === null 
+    ) {
+      // 1. Detect Pose
+      const results = landmarker.detectForVideo(videoRef.current, performance.now());
+      
+      // 2. Check Stillness
+      if (results.landmarks && results.landmarks.length > 0) {
+        const isStable = checkStillness(results.landmarks[0]);
+        
+        // 3. Trigger Countdown if Stable
+        if (isStable) {
+          startCountdown();
+        }
+      } else {
+        // Reset if no person found
+        resetStillness();
+      }
+    }
+    requestRef.current = requestAnimationFrame(animate);
+  };
+
+  // Start/Stop Loop based on state
+  useEffect(() => {
+    if (cameraStarted && landmarker) {
+      requestRef.current = requestAnimationFrame(animate);
+    }
+    return () => {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
+  }, [cameraStarted, landmarker, autoCaptureEnabled, countdown]); 
+
+  const startCountdown = () => {
+    setCountdown(timerDuration);
+    let count = timerDuration;
+    
+    const interval = setInterval(() => {
+      count--;
+      if (count <= 0) {
+        clearInterval(interval);
+        setCountdown(null);
+        captureFrame(); 
+        resetStillness(); 
+      } else {
+        setCountdown(count);
+      }
+    }, 1000);
+  };
 
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
     const targetMode = modeOverride || facingMode;
@@ -38,6 +102,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
 
     try {
+      // FIX: Removed 'zoom: true' to fix type error
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: targetMode,
@@ -53,7 +118,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           setCameraStarted(true);
           
           const track = stream.getVideoTracks()[0];
-          
           // @ts-ignore
           if ('getCapabilities' in track) {
             // @ts-ignore
@@ -75,7 +139,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
   };
 
-  // --- SMOOTH ZOOM HANDLER ---
+  // --- ZOOM HANDLER ---
   const updateZoom = (newZoom: number) => {
     setZoom(newZoom);
     pendingZoom.current = newZoom;
@@ -92,7 +156,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     if (!track.applyConstraints) return;
 
     isApplyingZoom.current = true;
-
     try {
       while (pendingZoom.current !== null) {
         const zoomToApply = pendingZoom.current;
@@ -118,9 +181,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const captureFrame = () => {
     if (!videoRef.current || !canvasRef.current) return;
     
-    // 1. Trigger Flash Effect
     setFlashActive(true);
-    setTimeout(() => setFlashActive(false), 150); // Flash lasts 150ms
+    setTimeout(() => setFlashActive(false), 150);
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -170,51 +232,47 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       
-      {/* --- FLASH OVERLAY --- */}
       {flashActive && (
         <div style={{
-          position: 'fixed',
-          top: 0, left: 0, width: '100vw', height: '100vh',
-          background: 'white',
-          zIndex: 9999,
-          pointerEvents: 'none', // Lets clicks pass through so it doesn't block UI
+          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+          background: 'white', zIndex: 9999, pointerEvents: 'none',
           animation: 'fadeOut 0.15s ease-out'
         }} />
       )}
 
-      {/* --- TOP TOOLBAR --- */}
       {cameraStarted && (
         <div style={{ 
           display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', padding: '0 10px'
         }}>
-          <button 
-            onClick={() => setIsMirrored(!isMirrored)}
-            style={{
-              background: 'rgba(50, 50, 50, 0.5)', border: 'none', 
-              width: '40px', height: '40px', borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', color: isMirrored ? '#ffd700' : '#fff',
-              backdropFilter: 'blur(10px)'
-            }}
-          >
-            <FlipHorizontal size={20} />
-          </button>
-
-          <div style={{ 
-            display: 'flex', gap: '15px', background: 'rgba(0,0,0,0.5)', padding: '5px 15px', borderRadius: '20px', backdropFilter: 'blur(10px)'
-          }}>
-            {['vertical', 'album', 'square'].map(f => (
-              <span 
-                key={f}
-                onClick={() => setFormat(f as any)} 
-                style={{ 
-                  color: format === f ? '#ffd700' : '#fff', 
-                  fontSize: '12px', fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' 
-                }}
-              >
-                {f === 'vertical' ? '9:16' : f === 'album' ? '4:3' : '1:1'}
-              </span>
-            ))}
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button 
+              onClick={() => setIsMirrored(!isMirrored)}
+              style={{
+                background: 'rgba(50, 50, 50, 0.5)', border: 'none', 
+                width: '40px', height: '40px', borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: isMirrored ? '#ffd700' : '#fff', backdropFilter: 'blur(10px)'
+              }}
+            >
+              <FlipHorizontal size={20} />
+            </button>
+            
+            <button 
+              onClick={() => {
+                 const next = timerDuration === 3 ? 5 : timerDuration === 5 ? 10 : 3;
+                 setTimerDuration(next);
+              }}
+              style={{
+                background: autoCaptureEnabled ? 'rgba(0, 255, 136, 0.2)' : 'rgba(50, 50, 50, 0.5)', 
+                border: autoCaptureEnabled ? '1px solid #00ff88' : 'none',
+                width: '40px', height: '40px', borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: autoCaptureEnabled ? '#00ff88' : '#fff', backdropFilter: 'blur(10px)',
+                fontSize: '12px', fontWeight: 'bold'
+              }}
+            >
+               {timerDuration}s
+            </button>
           </div>
 
            <button 
@@ -231,7 +289,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         </div>
       )}
 
-      {/* --- VIEWFINDER --- */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format === 'square' ? '1/1' : format === 'vertical' ? '9/16' : '4/3') : 'auto',
@@ -266,7 +323,28 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           }} 
         />
         
-        {/* CURRENT ZOOM DISPLAY */}
+        {cameraStarted && autoCaptureEnabled && countdown === null && (
+           <div style={{
+             position: 'absolute', top: '20px', 
+             background: 'rgba(0,0,0,0.6)', padding: '8px 16px', borderRadius: '20px',
+             color: isStill ? '#00ff88' : '#fff', fontSize: '14px', fontWeight: 'bold', 
+             backdropFilter: 'blur(4px)', border: isStill ? '1px solid #00ff88' : '1px solid transparent',
+             transition: 'all 0.3s'
+           }}>
+             {isAiLoading ? "Loading AI..." : isStill ? "Hold Still..." : "Looking for pose..."}
+           </div>
+        )}
+
+        {countdown !== null && (
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            fontSize: '120px', fontWeight: 'bold', color: '#fff', 
+            textShadow: '0 0 30px rgba(0,0,0,0.5)'
+          }}>
+            {countdown}
+          </div>
+        )}
+        
         {cameraStarted && zoomCap && (
           <div style={{
             position: 'absolute', bottom: '20px', 
@@ -278,68 +356,59 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         )}
       </div>
 
-      {/* --- BOTTOM CONTROLS --- */}
       {cameraStarted && (
         <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
           
-          {/* ZOOM CONTROLS */}
-          {zoomCap && (
-            <div style={{ width: '100%', maxWidth: '320px', marginBottom: '25px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-              
-              {/* Preset Buttons */}
-              <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
-                {[1, 2, 3].map((level) => {
-                  if (level > zoomCap.max || level < zoomCap.min) return null;
-                  return (
-                    <button
-                      key={level}
-                      onClick={() => updateZoom(level)}
-                      style={{
-                        width: '35px', height: '35px', borderRadius: '50%',
-                        background: zoom === level ? '#ffd700' : 'rgba(50,50,50,0.8)',
-                        color: zoom === level ? '#000' : '#fff',
-                        border: 'none', fontSize: '12px', fontWeight: 'bold',
-                        cursor: 'pointer', backdropFilter: 'blur(5px)',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      {level}x
-                    </button>
-                  );
-                })}
-              </div>
+           <div style={{ 
+            display: 'flex', gap: '15px', marginBottom: '20px',
+            background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: '25px'
+          }}>
+            {['vertical', 'album', 'square'].map(f => (
+              <span 
+                key={f}
+                onClick={() => setFormat(f as any)} 
+                style={{ 
+                  color: format === f ? '#ffd700' : '#888', 
+                  fontSize: '12px', fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' 
+                }}
+              >
+                {f === 'vertical' ? '9:16' : f === 'album' ? '4:3' : '1:1'}
+              </span>
+            ))}
+          </div>
 
-              {/* Slider */}
-              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.min}x</span>
-                <input 
-                  type="range" 
-                  min={zoomCap.min} 
-                  max={zoomCap.max} 
-                  step="0.1" 
-                  value={zoom} 
-                  onChange={(e) => updateZoom(parseFloat(e.target.value))}
-                  style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab' }}
-                />
-                <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.max.toFixed(1)}x</span>
-              </div>
-            </div>
-          )}
+          <div style={{ width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+             
+             {zoomCap && (
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '12px', color: '#666' }}>1x</span>
+                  <input 
+                    type="range" 
+                    min={zoomCap.min} 
+                    max={zoomCap.max} 
+                    step="0.1" 
+                    value={zoom} 
+                    onChange={(e) => updateZoom(parseFloat(e.target.value))}
+                    style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab' }}
+                  />
+                  <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.max.toFixed(1)}x</span>
+                </div>
+             )}
 
-          {/* SHUTTER BUTTON */}
-          <button 
-            onClick={captureFrame} 
-            disabled={isProcessing}
-            style={{
-              width: '72px', height: '72px', borderRadius: '50%',
-              background: isProcessing ? '#ccc' : '#fff',
-              border: '4px solid rgba(0,0,0,0)',
-              outline: '4px solid #fff', outlineOffset: '4px',
-              cursor: isProcessing ? 'wait' : 'pointer',
-              transition: 'transform 0.1s',
-              transform: isProcessing ? 'scale(0.9)' : 'scale(1)'
-            }}
-          />
+            <button 
+              onClick={captureFrame} 
+              disabled={isProcessing}
+              style={{
+                width: '72px', height: '72px', borderRadius: '50%',
+                background: isProcessing ? '#ccc' : '#fff',
+                border: '4px solid rgba(0,0,0,0)',
+                outline: '4px solid #fff', outlineOffset: '4px',
+                cursor: isProcessing ? 'wait' : 'pointer',
+                transition: 'transform 0.1s',
+                transform: isProcessing ? 'scale(0.9)' : 'scale(1)'
+              }}
+            />
+          </div>
 
         </div>
       )}
