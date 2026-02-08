@@ -16,7 +16,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef<number>(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  
+  const requestRef = useRef<number | null>(null);
   // -- Optimization Refs --
   const isApplyingZoom = useRef(false);
   const pendingZoom = useRef<number | null>(null);
