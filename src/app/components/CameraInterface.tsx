@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square, X, Loader2 } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { takeSnapshot } from '../utils/cameraHelpers';
-import { getGeminiAdvice } from '../actions'; // Server Action (Real AI)
+import { getGeminiAdvice } from '../actions'; 
 
 interface CameraInterfaceProps {
   onCapture: (base64Image: string) => void;
@@ -11,65 +11,81 @@ interface CameraInterfaceProps {
 }
 
 export default function CameraInterface({ onCapture, isProcessing }: CameraInterfaceProps) {
-  // --- REFS ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- STATE ---
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
+  const [flashActive, setFlashActive] = useState(false);
   
-  // --- SETTINGS ---
   const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0); 
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
   const [autoSessionActive, setAutoSessionActive] = useState(false);
   
-  // --- AI ADVICE STATE ---
   const [lastPhoto, setLastPhoto] = useState<string | null>(null);
   const [advice, setAdvice] = useState<string | null>(null);
   const [isLoadingAdvice, setIsLoadingAdvice] = useState(false);
 
-  // --- CAPTURE HANDLER ---
+  // --- HELPER: Resize Image for AI (Save Bandwidth/Errors) ---
+  const resizeForAI = (base64Str: string, maxWidth = 800): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = maxWidth / img.width;
+        // Only resize if image is bigger than maxWidth
+        if (scale >= 1) { resolve(base64Str); return; }
+
+        canvas.width = maxWidth;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.8)); // 80% quality JPG
+        } else {
+            resolve(base64Str);
+        }
+      };
+    });
+  };
+
   const performCapture = useCallback(() => {
     if (!videoRef.current) return;
-
-    // Flash Effect (Visual only, no button)
     const flashDiv = document.getElementById('flash-overlay');
     if (flashDiv) {
         flashDiv.style.opacity = '1';
         setTimeout(() => { flashDiv.style.opacity = '0'; }, 150);
     }
-
     const image = takeSnapshot(videoRef.current, format, isMirrored);
     if (image) {
         onCapture(image);
-        setLastPhoto(image); // Store photo for AI
-        setAdvice(null);     // Reset advice
+        setLastPhoto(image);
+        setAdvice(null);
     }
   }, [format, isMirrored, onCapture]);
 
-  // --- REAL AI TRIGGER (Manual Button) ---
   const handleGetTip = async () => {
       if (!lastPhoto) return;
       setIsLoadingAdvice(true);
-      
       try {
-        // Call the Server Action (Real Gemini API)
-        const tip = await getGeminiAdvice(lastPhoto); 
+        // 1. Resize before sending (Critical Fix!)
+        const smallImage = await resizeForAI(lastPhoto);
+        // 2. Send to Server
+        const tip = await getGeminiAdvice(smallImage); 
         setAdvice(tip);
       } catch (e) {
-        setAdvice("Couldn't reach the AI photographer. Try again.");
+        setAdvice("Connection error. Try again.");
       } finally {
         setIsLoadingAdvice(false);
       }
   };
 
-  // --- AI HOOK (Only for Green Lines, NOT for advice text) ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
@@ -79,21 +95,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     autoSessionActive
   );
 
-  // --- MANUAL COUNTDOWN LOGIC ---
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
   const handleShutterPress = () => {
     if (isProcessing) return;
-    
-    // Auto Mode Toggle
     if (autoCaptureEnabled) {
-        const newState = !autoSessionActive;
-        setAutoSessionActive(newState);
-        if (!newState) setAdvice(null);
+        setAutoSessionActive(!autoSessionActive);
         return;
     }
-
-    // Manual Mode
     if (timerDuration === 0) {
       performCapture();
       return;
@@ -113,7 +122,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   useEffect(() => { setAutoSessionActive(false); }, [autoCaptureEnabled]);
   const activeCountdown = manualCountdown !== null ? manualCountdown : aiCountdown;
 
-  // --- ZOOM LOGIC ---
   const handleZoomChange = (newZoom: number) => {
     const z = Math.min(Math.max(newZoom, zoomCap.min), zoomCap.max);
     setZoom(z);
@@ -125,7 +133,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }, 100);
   };
 
-  // --- CAMERA START ---
   const startCamera = async (overrideMode?: 'user' | 'environment') => {
     try {
       const modeToUse = overrideMode || facingMode;
@@ -165,7 +172,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
-      {/* Flash Overlay */}
       <div id="flash-overlay" style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, opacity: 0, pointerEvents: 'none', transition: 'opacity 0.15s' }} />
 
       {/* --- VIEWFINDER --- */}
@@ -200,7 +206,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* CONTROLS OVERLAY (Removed the confusing Lightbulb) */}
+        {/* CONTROLS */}
         {cameraStarted && (
             <>
                 <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.5), transparent)' }}>
@@ -215,7 +221,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
                 </div>
 
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }}>
-                    {/* Zoom */}
                     <div style={{ display: 'flex', gap: 15, marginBottom: 20 }}>
                         {[0.5, 1, 2].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
                             <button key={z} onClick={(e) => { e.stopPropagation(); handleZoomChange(z); }} 
@@ -224,7 +229,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
                             </button>
                         ) ))}
                     </div>
-                    {/* Shutter Row */}
                     <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px' }}>
                         <button onClick={cycleFormat} style={iconBtn}>
                             <Ratio size={20} />
@@ -243,26 +247,20 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         )}
       </div>
 
-      {/* --- AI ADVICE SECTION (Below Camera) --- */}
-      
-      {/* 1. BUTTON: Visible only after a photo is taken and advice isn't showing yet */}
+      {/* --- AI ADVICE --- */}
       {lastPhoto && !advice && !isLoadingAdvice && cameraStarted && (
           <button onClick={handleGetTip} 
             style={{
-                width: '100%', maxWidth: '300px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-                border: 'none', padding: '14px', borderRadius: '12px',
-                color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer',
-                boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)',
+                width: '100%', maxWidth: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                background: 'linear-gradient(135deg, #6366f1, #a855f7)', border: 'none', padding: '14px', borderRadius: '12px',
+                color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 15px rgba(168, 85, 247, 0.4)',
                 animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
             }}>
             <Sparkles size={18} fill="#fff" />
-            Ask AI About Last Photo
+            Analyze Last Photo
           </button>
       )}
 
-      {/* 2. LOADING STATE */}
       {isLoadingAdvice && (
           <div style={{ color: '#fff', fontSize: 14, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 10, background: '#222', padding: '10px 20px', borderRadius: '30px' }}>
              <Loader2 size={18} className="animate-spin" />
@@ -270,17 +268,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
       )}
 
-      {/* 3. ADVICE CARD (The Result) */}
       {advice && (
-        <div style={{ 
-            width: '100%', maxWidth: '400px',
-            background: '#1a1a1a', border: '1px solid #333',
-            color: '#eee', padding: '16px', borderRadius: '16px',
-            fontSize: 14, fontWeight: '500', lineHeight: '1.5',
-            display: 'flex', gap: 12, alignItems: 'start',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            animation: 'slideUp 0.3s ease-out', position: 'relative'
-        }}>
+        <div style={{ width: '100%', maxWidth: '400px', background: '#1a1a1a', border: '1px solid #333', color: '#eee', padding: '16px', borderRadius: '16px', fontSize: 14, fontWeight: '500', lineHeight: '1.5', display: 'flex', gap: 12, alignItems: 'start', boxShadow: '0 4px 20px rgba(0,0,0,0.5)', animation: 'slideUp 0.3s ease-out', position: 'relative' }}>
             <Sparkles size={20} color="#ffd700" style={{flexShrink:0, marginTop: 2}} />
             <div style={{ flex: 1 }}>
                 <span style={{display: 'block', fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1}}>AI Feedback</span>
@@ -291,12 +280,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             </button>
         </div>
       )}
-
     </div>
   );
 }
 
-// STYLES
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
