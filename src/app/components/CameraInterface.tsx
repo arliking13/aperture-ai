@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff, Square, Sparkles } from 'lucide-react';
+import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { takeSnapshot } from '../utils/cameraHelpers';
 
@@ -14,26 +14,26 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- STATE ---
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
   const [flashActive, setFlashActive] = useState(false);
   
-  const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(3);
-  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+  // --- SETTINGS (DEFAULTS UPDATED) ---
+  const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0); // Default: Off
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);    // Default: Manual
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
   const [autoSessionActive, setAutoSessionActive] = useState(false);
-  
-  // New State for Advice
   const [currentAdvice, setCurrentAdvice] = useState<string | null>(null);
 
   // --- AI HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill, getInstantAdvice } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
-    () => performCapture(), // Wrap function to avoid circular dependency
+    () => performCapture(), 
     timerDuration, 
     autoCaptureEnabled,
     autoSessionActive
@@ -41,36 +41,31 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   const performCapture = useCallback(async () => {
     if (!videoRef.current) return;
-    
-    // 1. Flash
     setFlashActive(true);
     setTimeout(() => setFlashActive(false), 150);
-
-    // 2. Take Photo
     const image = takeSnapshot(videoRef.current, format, isMirrored);
     if (image) onCapture(image);
 
-    // 3. GET ADVICE (The new logic)
-    // Run analysis on the frame we just captured
-    if (getInstantAdvice) {
+    // Get advice after capture
+    if (getInstantAdvice && autoCaptureEnabled) { // Only advise if Auto was on (optional preference)
         const advice = await getInstantAdvice();
-        if (advice) {
-            setCurrentAdvice(advice);
-            // Optional: Hide advice after 6 seconds so it's not annoying
-            // setTimeout(() => setCurrentAdvice(null), 6000);
-        }
+        if (advice) setCurrentAdvice(advice);
     }
-  }, [format, isMirrored, onCapture, getInstantAdvice]);
+  }, [format, isMirrored, onCapture, getInstantAdvice, autoCaptureEnabled]);
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
   const handleShutterPress = () => {
     if (isProcessing) return;
+    
+    // Auto Mode: Toggle Session
     if (autoCaptureEnabled) {
         setAutoSessionActive(!autoSessionActive);
-        if (!autoSessionActive) setCurrentAdvice(null); // Clear old advice on start
+        if (!autoSessionActive) setCurrentAdvice(null);
         return;
     }
+
+    // Manual Mode
     if (timerDuration === 0) {
       performCapture();
       return;
@@ -108,6 +103,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
          const oldStream = videoRef.current.srcObject as MediaStream;
          oldStream.getTracks().forEach(track => track.stop());
       }
+      // Cast to any for 'zoom' support
       const constraints = {
         video: { facingMode: modeToUse, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true } as any
       };
@@ -130,6 +126,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   useEffect(() => { if (cameraStarted) startTracking(); else stopTracking(); }, [cameraStarted, startTracking, stopTracking]);
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
+  
   const switchCamera = async () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
@@ -137,39 +134,25 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     await startCamera(newMode);
   };
 
+  const cycleFormat = () => {
+      setFormat(prev => prev === 'vertical' ? 'square' : prev === 'square' ? 'album' : 'vertical');
+  };
+
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       {flashActive && <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, animation: 'fadeOut 0.15s', pointerEvents: 'none' }} />}
 
-      {/* TOOLBAR */}
-      {cameraStarted && (
-        <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', marginBottom: 15, padding: '0 10px' }}>
-          <button onClick={toggleTimer} style={{...iconBtn, flexDirection:'column', gap:0, fontSize:10, fontWeight:'bold', color: timerDuration > 0 ? '#ffd700' : '#fff'}}>
-             {timerDuration === 0 ? <TimerOff size={16} /> : <><Timer size={14} />{timerDuration}s</>}
-          </button>
-          <button onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
-             style={{...iconBtn, width:'auto', padding:'0 15px', color: autoCaptureEnabled?'#00ff88':'#fff', border: autoCaptureEnabled?'1px solid #00ff88':'1px solid transparent', fontSize:12, fontWeight:'bold', gap:5}}>
-             {autoCaptureEnabled ? <Zap size={14}/> : <ZapOff size={14}/>}
-             {autoCaptureEnabled ? "AUTO" : "MANUAL"}
-          </button>
-          <button onClick={() => setIsMirrored(!isMirrored)} style={{...iconBtn, color: isMirrored?'#ffd700':'#fff'}}>
-             <FlipHorizontal size={20} />
-          </button>
-          <button onClick={switchCamera} style={iconBtn}>
-             <SwitchCamera size={20} />
-          </button>
-        </div>
-      )}
-
-      {/* VIEWFINDER */}
+      {/* --- IPHONE STYLE VIEWFINDER CONTAINER --- */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format==='square'?'1/1':format==='vertical'?'9/16':'4/3') : 'auto',
-        minHeight: cameraStarted ? 'auto' : '400px',
+        minHeight: cameraStarted ? 'auto' : '500px',
         borderRadius: 24, background: '#000', overflow: 'hidden', 
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        border: '2px solid #333'
+        border: '1px solid #333', boxShadow: '0 20px 40px rgba(0,0,0,0.5)'
       }}>
+        
+        {/* IDLE STATE */}
         {!cameraStarted && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
              <Camera size={64} color="#333" />
@@ -178,6 +161,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
+        {/* VIDEO LAYERS */}
         <video ref={videoRef} autoPlay playsInline muted 
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
@@ -185,72 +169,116 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
+        {/* COUNTDOWN OVERLAY */}
         {activeCountdown !== null && (
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: 120, fontWeight: 'bold', color: '#fff', textShadow: '0 0 30px rgba(0,0,0,0.5)' }}>
-            {activeCountdown}
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
+            <span style={{ fontSize: 140, fontWeight: 'bold', color: '#fff', textShadow: '0 5px 20px rgba(0,0,0,0.5)' }}>
+                {activeCountdown}
+            </span>
           </div>
         )}
 
-        {/* --- ADVICE BUBBLE --- */}
-        {/* Only show if we have advice AND no active countdown */}
+        {/* ADVICE BUBBLE */}
         {currentAdvice && activeCountdown === null && cameraStarted && (
             <div style={{ 
-                position: 'absolute', bottom: 30, left: 20, right: 20,
+                position: 'absolute', bottom: 100, left: 20, right: 20,
                 background: 'rgba(255, 255, 255, 0.95)', 
-                color: '#000', padding: '15px', borderRadius: '16px',
-                fontSize: 14, fontWeight: '600', lineHeight: '1.4',
+                color: '#000', padding: '12px 18px', borderRadius: '16px',
+                fontSize: 13, fontWeight: '600', lineHeight: '1.4',
                 boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-                display: 'flex', gap: 10, alignItems: 'center', animation: 'slideUp 0.3s ease-out'
+                display: 'flex', gap: 10, alignItems: 'center', animation: 'slideUp 0.3s ease-out', zIndex: 10
             }}>
-                <Sparkles size={20} color="#ffd700" style={{flexShrink:0}} />
+                <Sparkles size={18} color="#ffd700" style={{flexShrink:0}} />
                 <span>{currentAdvice}</span>
             </div>
         )}
 
-        {/* STATUS INDICATOR (Top) */}
-        {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
-           <div style={{ position: 'absolute', top: 20, background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, color: '#fff', fontSize: 12, fontWeight: 'bold', backdropFilter: 'blur(4px)', border: (isStill && autoSessionActive) ? '1px solid #00ff88' : '1px solid transparent', display: 'flex', alignItems: 'center', gap: 6 }}>
-             {autoSessionActive && <div style={{width:8, height:8, borderRadius:'50%', background:'#ff3b30', animation:'pulse 1s infinite'}} />}
-             {isAiReady ? (autoSessionActive ? (isStill ? "Hold Still..." : "Looking...") : "Press Shutter to Start") : "Loading AI..."}
-           </div>
+        {/* ---------------- OVERLAY CONTROLS (IOS STYLE) ---------------- */}
+        
+        {cameraStarted && (
+            <>
+                {/* 1. TOP BAR (Transparent) */}
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.5), transparent)' }}>
+                    
+                    {/* Auto/Manual Switch */}
+                    <button onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
+                        style={{...capsuleBtn, background: 'rgba(0,0,0,0.4)', border: autoCaptureEnabled ? '1px solid #00ff88' : '1px solid rgba(255,255,255,0.2)'}}>
+                        {autoCaptureEnabled ? <Zap size={14} color="#00ff88"/> : <ZapOff size={14} color="#fff"/>}
+                        <span style={{ color: autoCaptureEnabled ? '#00ff88' : '#fff' }}>{autoCaptureEnabled ? "AUTO" : "MANUAL"}</span>
+                    </button>
+
+                    {/* Timer Toggle */}
+                    <button onClick={toggleTimer} style={iconBtn}>
+                        {timerDuration === 0 ? <TimerOff size={20} /> : <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:0, fontSize:10, fontWeight:'bold'}}><Timer size={16} />{timerDuration}s</div>}
+                    </button>
+                </div>
+
+                {/* 2. BOTTOM AREA (Zoom + Shutter) */}
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }}>
+                    
+                    {/* Zoom Bubbles */}
+                    <div style={{ display: 'flex', gap: 15, marginBottom: 20 }}>
+                        {[0.5, 1, 2].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
+                            <button key={z} onClick={(e) => { e.stopPropagation(); handleZoomChange(z); }} 
+                                style={{ 
+                                    width: 30, height: 30, borderRadius: '50%', 
+                                    background: zoom === z ? 'rgba(255,215,0,0.9)' : 'rgba(0,0,0,0.5)', 
+                                    color: zoom === z ? '#000' : '#fff', fontSize: 10, fontWeight: 'bold', border: '1px solid rgba(255,255,255,0.2)' 
+                                }}>
+                                {z}x
+                            </button>
+                        ) ))}
+                    </div>
+
+                    {/* Main Controls Row */}
+                    <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px' }}>
+                        
+                        {/* Left: Aspect Ratio */}
+                        <button onClick={cycleFormat} style={iconBtn}>
+                            <Ratio size={20} />
+                            <span style={{fontSize:9, marginTop:2, fontWeight:'bold'}}>{format === 'vertical' ? '9:16' : format === 'square' ? '1:1' : '4:3'}</span>
+                        </button>
+
+                        {/* Center: Shutter */}
+                        <button onClick={handleShutterPress} disabled={isProcessing}
+                            style={{ 
+                                width: 72, height: 72, borderRadius: '50%', 
+                                background: isProcessing ? '#333' : (autoCaptureEnabled && autoSessionActive ? '#ff3b30' : '#fff'), 
+                                border: '4px solid rgba(0,0,0,0.1)', outline: '4px solid #fff', outlineOffset: 2, 
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                            }}
+                        >
+                            {autoCaptureEnabled && autoSessionActive ? <Square fill="#fff" size={24} /> : null}
+                        </button>
+
+                        {/* Right: Flip Camera */}
+                        <button onClick={switchCamera} style={iconBtn}>
+                            <SwitchCamera size={22} />
+                        </button>
+                    </div>
+                </div>
+            </>
         )}
       </div>
-
-      {/* CONTROLS */}
-      {cameraStarted && (
-        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-           <div style={{ display: 'flex', gap: 20, marginBottom: 20, background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: 25 }}>
-            {['vertical', 'album', 'square'].map(f => (
-              <span key={f} onClick={() => setFormat(f as any)} 
-                style={{ color: format===f?'#ffd700':'#888', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase' }}>
-                {f==='vertical'?'9:16':f==='album'?'4:3':'1:1'}
-              </span>
-            ))}
-          </div>
-
-          <div style={{ width: '100%', maxWidth: 350, marginBottom: 25, display: 'flex', flexDirection: 'column', gap: 10 }}>
-             <div style={{ display: 'flex', justifyContent: 'center', gap: 15 }}>
-                {[0.5, 1, 2, 3].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
-                     <button key={z} onClick={() => handleZoomChange(z)} style={{ width: 35, height: 35, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.3)', background: zoom === z ? '#ffd700' : 'rgba(0,0,0,0.5)', color: zoom === z ? '#000' : '#fff', fontSize: 11, fontWeight: 'bold' }}>{z}x</button>
-                ) ))}
-             </div>
-             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 10, color: '#666' }}>{zoomCap.min}x</span>
-                <input type="range" min={zoomCap.min} max={zoomCap.max} step={0.1} value={zoom} onChange={(e) => handleZoomChange(parseFloat(e.target.value))} style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab', height: 4 }} />
-                <span style={{ fontSize: 10, color: '#666' }}>{zoomCap.max}x</span>
-             </div>
-          </div>
-
-          <button onClick={handleShutterPress} disabled={isProcessing}
-             style={{ width: 80, height: 80, borderRadius: '50%', background: isProcessing ? '#333' : (autoCaptureEnabled && autoSessionActive ? '#ff3b30' : '#fff'), border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: 4, cursor: isProcessing?'wait':'pointer', transform: isProcessing?'scale(0.9)':'scale(1)', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.3s' }}
-          >
-             {autoCaptureEnabled && autoSessionActive ? <Square fill="#fff" size={32} /> : ((timerDuration > 0 && !isProcessing) && <span style={{ fontSize: 20, color: '#000', fontWeight: 'bold' }}>{timerDuration}</span>)}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
-const iconBtn = { background: 'rgba(50,50,50,0.5)', border: 'none', width: 45, height: 45, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(10px)', color: '#fff' };
-const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
+// STYLES
+const iconBtn = { 
+    background: 'transparent', border: 'none', 
+    color: '#fff', cursor: 'pointer', 
+    display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center',
+    width: 40, height: 40
+};
+const capsuleBtn = { 
+    display: 'flex', alignItems: 'center', gap: 6, 
+    padding: '6px 12px', borderRadius: 20, 
+    fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
+    backdropFilter: 'blur(10px)'
+};
+const startBtn = { 
+    background: '#fff', color: '#000', border: 'none', 
+    padding: '15px 40px', borderRadius: 30, 
+    fontSize: 18, fontWeight: 'bold', cursor: 'pointer' 
+};

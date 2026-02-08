@@ -1,4 +1,3 @@
-// src/app/hooks/usePoseTracker.ts
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 import * as tf from '@tensorflow/tfjs';
@@ -34,12 +33,18 @@ export function usePoseTracker(
   useEffect(() => { isSessionRef.current = isSessionActive; }, [isSessionActive]);
   useEffect(() => { captureRef.current = onCaptureTrigger; }, [onCaptureTrigger]);
 
-  // Cleanup
+  // CLEANUP: Ensure canvas is wiped when Auto is disabled
   useEffect(() => {
     if (!isAutoEnabled) {
         if (countdownTimer.current) clearInterval(countdownTimer.current);
         setCountdown(null);
         setIsStill(false);
+        
+        // Force clear canvas immediately
+        if (canvasRef.current) {
+            const ctx = canvasRef.current.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
     }
   }, [isAutoEnabled]);
 
@@ -64,8 +69,7 @@ export function usePoseTracker(
     loadModels();
   }, []);
 
-  // --- NEW: ON-DEMAND ANALYSIS FUNCTION ---
-  // This is called by the UI *after* taking a photo
+  // ON-DEMAND ADVICE (Called after capture)
   const getInstantAdvice = useCallback(async () => {
       if (!videoRef.current || !canvasRef.current || !objectModelRef.current || !landmarkerRef.current) return null;
       
@@ -73,23 +77,22 @@ export function usePoseTracker(
       const ctx = canvasRef.current.getContext('2d');
       if (!ctx) return null;
 
-      // 1. Get Objects
       const predictions = await objectModelRef.current.detect(video);
-      
-      // 2. Get Pose (Snapshot)
       const poseResult = landmarkerRef.current.detectForVideo(video, performance.now());
       const landmarks = poseResult.landmarks ? poseResult.landmarks[0] : [];
-
-      // 3. Get Brightness
       const brightness = analyzeBrightness(ctx, canvasRef.current.width, canvasRef.current.height);
 
-      // 4. Generate Advice
       return generateSmartAdvice(landmarks, predictions, brightness);
   }, []);
 
-  // Continuous Pose Loop (For Auto-Trigger Logic Only)
+  // POSE LOOP
   const detectPose = async () => {
+    // 1. Manual Mode Check: Clear and Exit
     if (!isAutoRef.current) {
+         if (canvasRef.current) {
+             const ctx = canvasRef.current.getContext('2d');
+             if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+         }
          requestRef.current = requestAnimationFrame(detectPose);
          return;
     }
@@ -108,7 +111,6 @@ export function usePoseTracker(
             const drawingUtils = new DrawingUtils(ctx);
             drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
-            // Session Logic (Stillness Detection)
             if (isSessionRef.current && !countdownTimer.current) {
                 if (calculateMovement(landmarks, previousLandmarks.current) < 0.008) {
                     stillFrames.current++;
