@@ -2,8 +2,7 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Cloudinary automatically connects using your CLOUDINARY_URL environment variable.
-// DO NOT add a manual cloudinary.config() block here, or it will break.
+// Cloudinary auto-configures from CLOUDINARY_URL environment variable
 
 // 1. Upload Function
 export async function uploadPhoto(base64Image: string): Promise<string> {
@@ -18,10 +17,9 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// 2. Fetch Gallery (With 1-Hour Auto-Delete)
+// 2. Fetch Gallery (With 10-Minute Auto-Delete)
 export async function getCloudImages() {
   try {
-    // Get the last 50 photos
     const result = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
@@ -29,28 +27,24 @@ export async function getCloudImages() {
       .execute();
 
     const now = Date.now();
-    const oneHour = 60 * 60 * 1000; // 1 Hour in milliseconds
+    const tenMinutes = 10 * 60 * 1000; // 10 Minutes in milliseconds (CHANGED)
     
     const validUrls: string[] = [];
     const idsToDelete: string[] = [];
 
-    // Filter photos
     for (const file of result.resources) {
       const fileTime = new Date(file.created_at).getTime();
       const age = now - fileTime;
 
-      if (age > oneHour) {
-        // If older than 1 hour, mark for deletion
+      // Check if older than 10 minutes
+      if (age > tenMinutes) {
         idsToDelete.push(file.public_id);
       } else {
-        // If fresh, keep it
         validUrls.push(file.secure_url);
       }
     }
 
-    // Delete the old ones from the cloud immediately
     if (idsToDelete.length > 0) {
-      // We don't await this so it doesn't slow down the user
       cloudinary.api.delete_resources(idsToDelete);
       console.log(`Cleaned up ${idsToDelete.length} expired photos.`);
     }

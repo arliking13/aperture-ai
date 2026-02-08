@@ -72,7 +72,7 @@ export default function Home() {
           Cloud Gallery (Public)
         </h3>
         <p style={{ color: '#666', fontSize: '0.8rem', marginBottom: '15px', fontStyle: 'italic' }}>
-          ⚠️ Photos are automatically deleted after 1 hour.
+          ⚠️ Photos are automatically deleted after 10 minutes.
         </p>
         
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
