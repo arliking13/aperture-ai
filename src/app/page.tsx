@@ -1,13 +1,16 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { uploadPhoto, getCloudImages } from './actions'; // We will fix these next
+import { uploadPhoto, getCloudImages } from './actions';
 import CameraInterface from './components/CameraInterface';
+import { X, Download } from 'lucide-react'; // Make sure you have lucide-react installed
 
 export default function Home() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  
+  // NEW: State for the fullscreen modal
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
-  // 1. Load Gallery on Mount
   useEffect(() => {
     const loadGallery = async () => {
       try {
@@ -20,17 +23,12 @@ export default function Home() {
     loadGallery();
   }, []);
 
-  // 2. Handle Capture (Upload + Update Gallery)
   const handleCapture = async (base64Image: string) => {
     setUploading(true);
     try {
-      // Optimistic update (show immediately)
       setPhotos(prev => [base64Image, ...prev]);
-      
-      // Upload to cloud (if you have the backend set up)
       const url = await uploadPhoto(base64Image);
       if (url && url.startsWith('http')) {
-         // Replace base64 with real URL if upload succeeds
          setPhotos(prev => [url, ...prev.slice(1)]);
       }
     } catch (error) {
@@ -54,7 +52,7 @@ export default function Home() {
         isProcessing={uploading} 
       />
 
-      {/* --- RESTORED GALLERY SECTION --- */}
+      {/* --- GALLERY SECTION --- */}
       <div style={{ marginTop: '40px', width: '100%', maxWidth: '500px' }}>
         <h3 style={{ 
           borderBottom: '1px solid #333', paddingBottom: '10px',
@@ -72,26 +70,83 @@ export default function Home() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
             {photos.map((url, i) => (
-              <a key={i} href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', position: 'relative', aspectRatio: '1/1' }}>
+              <div 
+                key={i} 
+                onClick={() => setSelectedPhoto(url)} // Open Modal on Click
+                style={{ cursor: 'pointer', position: 'relative', aspectRatio: '1/1' }}
+              >
                 <img 
                   src={url} 
                   alt={`Photo ${i}`} 
                   style={{ 
                     width: '100%', height: '100%', objectFit: 'cover',
                     borderRadius: '10px', border: '1px solid #333',
-                    animation: 'fadeIn 0.5s ease'
+                    transition: 'transform 0.1s',
                   }} 
+                  onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'}
+                  onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
                 />
-              </a>
+              </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* --- FULLSCREEN MODAL (THE FIX) --- */}
+      {selectedPhoto && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 10000,
+          background: 'rgba(0,0,0,0.95)', backdropFilter: 'blur(10px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeIn 0.2s ease-out'
+        }}>
+          {/* Close Button */}
+          <button 
+            onClick={() => setSelectedPhoto(null)}
+            style={{
+              position: 'absolute', top: 20, right: 20,
+              background: 'rgba(255,255,255,0.1)', border: 'none',
+              borderRadius: '50%', width: 40, height: 40,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', cursor: 'pointer'
+            }}
+          >
+            <X size={24} />
+          </button>
+
+          {/* Image */}
+          <img 
+            src={selectedPhoto} 
+            alt="Full view"
+            style={{
+              maxWidth: '90vw', maxHeight: '80vh',
+              borderRadius: '8px', boxShadow: '0 0 50px rgba(0,0,0,0.8)'
+            }} 
+          />
+
+          {/* Download Button */}
+          <a 
+            href={selectedPhoto} 
+            download={`aperture-photo-${Date.now()}.jpg`}
+            style={{
+              position: 'absolute', bottom: 30,
+              background: '#00ff88', color: '#000',
+              padding: '12px 24px', borderRadius: '30px',
+              textDecoration: 'none', fontWeight: 'bold',
+              display: 'flex', alignItems: 'center', gap: '8px',
+              boxShadow: '0 0 20px rgba(0,255,136,0.3)'
+            }}
+          >
+            <Download size={18} />
+            Save Photo
+          </a>
+        </div>
+      )}
       
       <style jsx global>{`
         @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
       `}</style>
     </main>
