@@ -114,12 +114,13 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- FIXED: 4 Arguments & Destructuring 'stability' for UI feedback ---
+  // --- CHANGED: Passed 5 arguments now. 'autoSessionActive' tells it when to capture. ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
-    timerDuration || 3
+    timerDuration || 3,
+    autoSessionActive // <--- New: Only capture when session is active
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -188,13 +189,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
+  // --- CHANGED LOGIC: Track whenever Auto is ON, not just when active ---
   useEffect(() => { 
-      if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
+      if (cameraStarted && autoCaptureEnabled) {
           startTracking(); 
       } else {
           stopTracking();
       }
-  }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
+  }, [cameraStarted, autoCaptureEnabled, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   const switchCamera = async () => {
@@ -240,7 +242,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* --- ADDED: Stability Feedback (So you know it's charging) --- */}
+        {/* STATUS PILL */}
         {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
            <div style={{
              position: 'absolute', top: 20,
@@ -249,7 +251,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              border: stability > 0 ? '1px solid #00ff88' : '1px solid transparent',
              transition: 'all 0.2s'
            }}>
-             {stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start"}
+             {/* Text changes based on whether you are RECORDING or just PREVIEWING */}
+             {!autoSessionActive ? "Auto Standby" : (stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start")}
            </div>
         )}
 

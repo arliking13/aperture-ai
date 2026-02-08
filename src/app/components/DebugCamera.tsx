@@ -40,7 +40,8 @@ export default function DebugCamera() {
     videoRef,
     canvasRef,
     () => addLog("📸 SNAPSHOT TRIGGERED!"), 
-    3
+    3,
+    true // Capture active for debug
   );
 
   useEffect(() => {

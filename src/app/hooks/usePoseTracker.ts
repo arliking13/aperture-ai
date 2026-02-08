@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
-// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.006; 
-const FRAMES_TO_LOCK = 150;       // ~5 Seconds
+const FRAMES_TO_LOCK = 150; // ~5 Seconds
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -23,7 +22,8 @@ export function usePoseTracker(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   onCaptureTrigger: () => void,
-  timerDuration: number
+  timerDuration: number,
+  shouldCapture: boolean = true // NEW ARGUMENT (Default true for DebugCamera)
 ) {
   const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
@@ -34,8 +34,6 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
-  
-  // THE FIX: A "Kill Switch" flag to stop the loop instantly
   const shouldTrack = useRef(false);
 
   useEffect(() => {
@@ -62,7 +60,6 @@ export function usePoseTracker(
   }, []);
 
   const detectPose = useCallback(() => {
-    // 1. KILL SWITCH: If tracking is off, STOP IMMEDIATELY.
     if (!shouldTrack.current) return;
 
     const video = videoRef.current;
@@ -101,12 +98,18 @@ export function usePoseTracker(
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
-        if (stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
+        // TRIGGER LOGIC: Only start countdown if shouldCapture is TRUE
+        if (shouldCapture && stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
            startCountdown();
         }
 
-        // Draw
-        const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
+        // Visuals - Gray if standby, Green if active & stable
+        const isStable = percent > 50;
+        let color = 'rgba(255, 255, 255, 0.4)'; // Default white/ghost
+        if (shouldCapture) {
+            color = isStable ? '#00ff88' : 'rgba(255, 255, 255, 0.6)';
+        }
+
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
         drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: color, lineWidth: 2 });
@@ -115,11 +118,10 @@ export function usePoseTracker(
       }
     }
     
-    // Loop only if allowed
     if (shouldTrack.current) {
       requestRef.current = requestAnimationFrame(detectPose);
     }
-  }, [landmarker, timerDuration, onCaptureTrigger]); // Added dependencies
+  }, [landmarker, timerDuration, onCaptureTrigger, shouldCapture]); // Added shouldCapture dependency
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -148,31 +150,19 @@ export function usePoseTracker(
   }, [detectPose]);
 
   const stopTracking = useCallback(() => {
-    // 1. Flip the Kill Switch
     shouldTrack.current = false;
-
-    // 2. Kill the loop
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
-    
-    // 3. FORCE CLEAR THE CANVAS
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
-        // Clear multiple times to ensure it's gone
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        requestAnimationFrame(() => {
-             if (canvasRef.current) {
-                const ctx2 = canvasRef.current.getContext('2d');
-                ctx2?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-             }
-        });
+        // Double clear for safety
+        requestAnimationFrame(() => ctx.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height));
       }
     }
-    
-    // 4. Reset State
     setStability(0);
     stillFrames.current = 0;
     setCountdown(null);
@@ -181,12 +171,5 @@ export function usePoseTracker(
 
   useEffect(() => { return () => stopTracking(); }, [stopTracking]);
 
-  return { 
-    isAiReady, 
-    startTracking, 
-    stopTracking, 
-    countdown, 
-    stability,
-    isStill: stability > 20 
-  };
+  return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
 }
