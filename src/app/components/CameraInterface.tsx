@@ -9,15 +9,18 @@ interface CameraInterfaceProps {
 }
 
 export default function CameraInterface({ onCapture, isProcessing }: CameraInterfaceProps) {
-  // --- REFS (From Old Code) ---
+  // --- LOGIC REFS (The "Brain") ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef<number>(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  const isApplyingZoom = useRef(false);
+  const pendingZoom = useRef<number | null>(null);
 
-  // --- UI STATE ---
+  // --- UI STATE (The "Look") ---
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
@@ -26,15 +29,16 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
   const [isStill, setIsStill] = useState(false);
-
+  
   // Settings
   const [timerDuration, setTimerDuration] = useState(3);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
   
-  // AI Ref
-  const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  // Zoom
+  const [zoom, setZoom] = useState(1);
+  const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
 
-  // 1. LOAD AI (Run once on mount)
+  // 1. INITIALIZE AI (The Working Logic)
   useEffect(() => {
     async function loadAI() {
       try {
@@ -44,14 +48,13 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         const marker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-            delegate: "GPU" // USING GPU (Like your old code)
+            delegate: "GPU" // Kept GPU as it worked for you
           },
           runningMode: "VIDEO",
           numPoses: 1
         });
         landmarkerRef.current = marker;
         setIsAiReady(true);
-        console.log("AI Loaded");
       } catch (err) {
         console.error("AI Error:", err);
       }
@@ -74,7 +77,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     return total / keyPoints.length;
   };
 
-  // 3. THE LOOP (Self-contained)
+  // 3. THE LOOP
   const detectPose = () => {
     if (!landmarkerRef.current || !videoRef.current || videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(detectPose);
@@ -85,7 +88,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     const canvas = canvasRef.current;
     const results = landmarkerRef.current.detectForVideo(video, performance.now());
 
-    // DRAW & LOGIC
     if (canvas) {
       const ctx = canvas.getContext('2d');
       if (ctx) {
@@ -96,8 +98,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         if (results.landmarks && results.landmarks.length > 0) {
           const landmarks = results.landmarks[0];
           
-          // Visuals
+          // Draw Skeleton (Visual Feedback)
+          // Using your original colors (White/Green)
           const drawingUtils = new DrawingUtils(ctx);
+          drawingUtils.drawLandmarks(landmarks, { radius: 3, color: '#00ff88', fillColor: '#000' });
           drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
           // Logic
@@ -106,7 +110,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              if (movement < 0.008) {
                stillFrames.current++;
                setIsStill(true);
-               if (stillFrames.current > 30) { // ~1 second
+               // Trigger at 30 frames (~1 sec)
+               if (stillFrames.current > 30) { 
                  startCountdownSequence();
                }
              } else {
@@ -130,7 +135,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     
     let count = timerDuration;
     setCountdown(count);
-    setIsStill(true); // Keep UI green
+    setIsStill(true); 
 
     countdownTimer.current = setInterval(() => {
       count--;
@@ -138,7 +143,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         clearInterval(countdownTimer.current!);
         countdownTimer.current = null;
         setCountdown(null);
-        triggerCapture(); // Capture!
+        triggerCapture();
         stillFrames.current = 0;
         setIsStill(false);
       } else {
@@ -147,21 +152,63 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }, 1000);
   };
 
-  // 5. CAMERA START
+  // 5. CAMERA START & ZOOM
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { facingMode: facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } }
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadeddata = () => {
           videoRef.current?.play();
           setCameraStarted(true);
-          detectPose(); // Start loop
+          detectPose();
+          
+          const track = stream.getVideoTracks()[0];
+          // @ts-ignore
+          if ('getCapabilities' in track) {
+            // @ts-ignore
+            const capabilities = track.getCapabilities();
+            // @ts-ignore
+            if (capabilities.zoom) {
+               // @ts-ignore
+               setZoomCap({ min: capabilities.zoom.min, max: capabilities.zoom.max });
+               // @ts-ignore
+               setZoom(capabilities.zoom.min);
+            }
+          }
         };
       }
     } catch (e) { alert("Camera Error"); }
+  };
+
+  const updateZoom = (newZoom: number) => {
+    setZoom(newZoom);
+    pendingZoom.current = newZoom;
+    if (!isApplyingZoom.current) applyZoomToHardware();
+  };
+
+  const applyZoomToHardware = async () => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    const stream = videoRef.current.srcObject as MediaStream;
+    const track = stream.getVideoTracks()[0];
+    // @ts-ignore
+    if (!track.applyConstraints) return;
+
+    isApplyingZoom.current = true;
+    try {
+      while (pendingZoom.current !== null) {
+        const zoomToApply = pendingZoom.current;
+        pendingZoom.current = null;
+        // @ts-ignore
+        await track.applyConstraints({ advanced: [{ zoom: zoomToApply }] });
+      }
+    } catch (err) { console.error(err); } 
+    finally {
+      isApplyingZoom.current = false;
+      if (pendingZoom.current !== null) applyZoomToHardware();
+    }
   };
 
   // 6. CAPTURE LOGIC
@@ -171,7 +218,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     setTimeout(() => setFlashActive(false), 150);
 
     const video = videoRef.current;
-    // Format Crop Logic...
     const vidW = video.videoWidth;
     const vidH = video.videoHeight;
     let targetW = vidW, targetH = vidH;
@@ -211,41 +257,63 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       
-      {flashActive && <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 999, animation: 'fadeOut 0.15s' }} />}
+      {/* Flash Overlay */}
+      {flashActive && <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, animation: 'fadeOut 0.15s ease-out', pointerEvents: 'none' }} />}
 
-      {/* TOOLBAR */}
+      {/* --- TOP TOOLBAR --- */}
       {cameraStarted && (
-        <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', marginBottom: '20px', padding: '0 10px' }}>
-          <button onClick={() => setIsMirrored(!isMirrored)} style={btnStyle}>
-             <FlipHorizontal size={20} color={isMirrored ? '#ffd700' : '#fff'} />
+        <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', padding: '0 10px' }}>
+          <button 
+             onClick={() => setIsMirrored(!isMirrored)}
+             style={{...iconBtnStyle, color: isMirrored ? '#ffd700' : '#fff'}}
+          >
+             <FlipHorizontal size={24} />
           </button>
-          <button onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)} 
-             style={{...btnStyle, width: 'auto', padding: '0 15px', color: autoCaptureEnabled ? '#00ff88' : '#fff', fontSize: '10px', border: autoCaptureEnabled ? '1px solid #00ff88' : 'none'}}>
-             {autoCaptureEnabled ? "AUTO ON" : "AUTO OFF"}
+          
+          <button 
+             onClick={() => {
+                const next = timerDuration === 3 ? 5 : timerDuration === 5 ? 10 : 3;
+                setTimerDuration(next);
+             }}
+             style={{
+                ...iconBtnStyle, 
+                width: 'auto', padding: '0 15px', borderRadius: '20px',
+                border: autoCaptureEnabled ? '1px solid #00ff88' : '1px solid #333',
+                color: autoCaptureEnabled ? '#00ff88' : '#fff', 
+                fontSize: '13px', fontWeight: 'bold'
+             }}
+          >
+             {autoCaptureEnabled ? `AUTO ${timerDuration}s` : "MANUAL"}
           </button>
-          <button onClick={() => {
-             const newMode = facingMode === 'user' ? 'environment' : 'user';
-             setFacingMode(newMode);
-             setCameraStarted(false); // Restart cam
-             setTimeout(() => startCamera(), 100);
-          }} style={btnStyle}>
-             <SwitchCamera size={20} color="#fff" />
+
+          <button 
+             onClick={() => {
+                const newMode = facingMode === 'user' ? 'environment' : 'user';
+                setFacingMode(newMode);
+                setCameraStarted(false); 
+                setTimeout(() => startCamera(), 100);
+             }} 
+             style={iconBtnStyle}
+          >
+             <SwitchCamera size={24} />
           </button>
         </div>
       )}
 
-      {/* VIEWFINDER */}
+      {/* --- VIEWFINDER --- */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format === 'square' ? '1/1' : format === 'vertical' ? '9/16' : '4/3') : 'auto',
         minHeight: cameraStarted ? 'auto' : '400px',
-        borderRadius: '24px', background: '#000', overflow: 'hidden', border: '2px solid #333',
+        borderRadius: '24px', background: '#000', overflow: 'hidden', 
+        boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+        transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)',
         display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}>
         {!cameraStarted && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
              <Camera size={64} color="#333" />
-             <button onClick={startCamera} style={mainBtnStyle}>Open Camera</button>
+             <button onClick={startCamera} style={startBtnStyle}>Open Camera</button>
              {!isAiReady && <p style={{color: '#666', fontSize: '12px'}}>Loading AI...</p>}
           </div>
         )}
@@ -257,39 +325,107 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
-        {/* OVERLAYS */}
+        {/* COUNTDOWN */}
         {countdown !== null && (
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '100px', fontWeight: 'bold', color: '#fff', textShadow: '0 0 20px #000' }}>
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '120px', fontWeight: 'bold', color: '#fff', textShadow: '0 0 30px rgba(0,0,0,0.5)' }}>
             {countdown}
           </div>
         )}
 
+        {/* STATUS BADGE */}
         {cameraStarted && autoCaptureEnabled && countdown === null && (
-           <div style={{ position: 'absolute', top: '20px', background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '20px', color: isStill ? '#00ff88' : '#fff', fontSize: '12px', fontWeight: 'bold', backdropFilter: 'blur(4px)', border: isStill ? '1px solid #00ff88' : 'none' }}>
-             {isAiReady ? (isStill ? "Hold Still..." : "Detecting...") : "Loading AI..."}
+           <div style={{ 
+             position: 'absolute', top: '20px', 
+             background: 'rgba(0,0,0,0.6)', padding: '8px 16px', borderRadius: '20px', 
+             color: isStill ? '#00ff88' : '#fff', fontSize: '14px', fontWeight: 'bold', 
+             backdropFilter: 'blur(4px)', border: isStill ? '1px solid #00ff88' : '1px solid transparent',
+             transition: 'all 0.3s'
+           }}>
+             {isAiReady ? (isStill ? "Hold Still..." : "Looking for pose...") : "Loading AI..."}
            </div>
+        )}
+        
+        {/* ZOOM INDICATOR */}
+        {cameraStarted && zoomCap && (
+          <div style={{
+            position: 'absolute', bottom: '20px', 
+            background: 'rgba(0,0,0,0.6)', padding: '5px 12px', borderRadius: '20px',
+            color: '#fff', fontSize: '12px', fontWeight: 'bold', backdropFilter: 'blur(4px)'
+          }}>
+            {zoom.toFixed(1)}x
+          </div>
         )}
       </div>
 
-      {/* BOTTOM CONTROLS */}
+      {/* --- BOTTOM CONTROLS --- */}
       {cameraStarted && (
         <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-           <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: '25px'}}>
+           
+           {/* FORMAT SELECTOR */}
+           <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', background: 'rgba(30,30,30,0.8)', padding: '10px 25px', borderRadius: '30px' }}>
             {['vertical', 'album', 'square'].map(f => (
               <span key={f} onClick={() => setFormat(f as any)} 
-                style={{ color: format === f ? '#ffd700' : '#888', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>
+                style={{ color: format === f ? '#ffd700' : '#888', fontSize: '12px', fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '1px' }}>
                 {f === 'vertical' ? '9:16' : f === 'album' ? '4:3' : '1:1'}
               </span>
             ))}
           </div>
-          <button onClick={triggerCapture} disabled={isProcessing}
-             style={{ width: '72px', height: '72px', borderRadius: '50%', background: isProcessing ? '#ccc' : '#fff', border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: '4px', cursor: isProcessing ? 'wait' : 'pointer', transform: isProcessing ? 'scale(0.9)' : 'scale(1)' }}
-          />
+
+          {/* CONTROLS ROW */}
+          <div style={{ width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+             
+             {/* ZOOM SLIDER */}
+             {zoomCap && (
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '12px', color: '#666' }}>1x</span>
+                  <input 
+                    type="range" min={zoomCap.min} max={zoomCap.max} step="0.1" value={zoom} 
+                    onChange={(e) => updateZoom(parseFloat(e.target.value))}
+                    style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab', height: '4px' }}
+                  />
+                  <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.max.toFixed(1)}x</span>
+                </div>
+             )}
+
+            {/* SHUTTER BUTTON */}
+            <button 
+               onClick={triggerCapture} 
+               disabled={isProcessing}
+               style={{
+                 width: '80px', height: '80px', borderRadius: '50%',
+                 background: isProcessing ? '#333' : '#fff',
+                 border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: '4px',
+                 cursor: isProcessing ? 'wait' : 'pointer',
+                 transition: 'transform 0.1s',
+                 transform: isProcessing ? 'scale(0.9)' : 'scale(1)',
+                 boxShadow: '0 0 20px rgba(255,255,255,0.2)'
+               }}
+            />
+             
+             <button 
+                onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
+                style={{ fontSize: '12px', color: '#666', background: 'none', border: 'none', marginTop: '10px' }}
+             >
+               {autoCaptureEnabled ? "Tap to switch to Manual" : "Tap to switch to Auto"}
+             </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-const btnStyle = { background: 'rgba(50, 50, 50, 0.5)', border: 'none', width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(10px)' };
-const mainBtnStyle = { background: '#fff', color: '#000', border: 'none', padding: '12px 30px', borderRadius: '30px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' };
+// STYLES
+const iconBtnStyle = {
+  background: 'rgba(50, 50, 50, 0.5)', border: 'none', 
+  width: '45px', height: '45px', borderRadius: '50%',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  cursor: 'pointer', backdropFilter: 'blur(10px)', color: '#fff'
+};
+
+const startBtnStyle = {
+  background: '#fff', color: '#000', border: 'none',
+  padding: '15px 40px', borderRadius: '30px',
+  fontSize: '18px', fontWeight: 'bold', cursor: 'pointer',
+  boxShadow: '0 10px 30px rgba(255,255,255,0.2)'
+};
