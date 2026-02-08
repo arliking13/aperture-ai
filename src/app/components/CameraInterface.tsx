@@ -114,13 +114,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- CHANGED: Passed 5 arguments now. 'autoSessionActive' tells it when to capture. ---
+  // --- RESTORED: Stable 4-Argument Call ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
-    timerDuration || 3,
-    autoSessionActive // <--- New: Only capture when session is active
+    timerDuration || 3
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -189,14 +188,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- CHANGED LOGIC: Track whenever Auto is ON, not just when active ---
+  // --- RESTORED LOGIC: Active only when Recording + Auto is On ---
   useEffect(() => { 
-      if (cameraStarted && autoCaptureEnabled) {
+      if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
       } else {
           stopTracking();
       }
-  }, [cameraStarted, autoCaptureEnabled, startTracking, stopTracking]);
+  }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   const switchCamera = async () => {
@@ -251,8 +250,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              border: stability > 0 ? '1px solid #00ff88' : '1px solid transparent',
              transition: 'all 0.2s'
            }}>
-             {/* Text changes based on whether you are RECORDING or just PREVIEWING */}
-             {!autoSessionActive ? "Auto Standby" : (stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start")}
+             {stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start"}
            </div>
         )}
 
@@ -334,6 +332,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   );
 }
 
+// --- RESTORED STYLES (Bottom of File) ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
