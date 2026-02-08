@@ -17,7 +17,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const isApplyingZoom = useRef(false);
   const pendingZoom = useRef<number | null>(null);
   
-  // FIX: Initialize with null to satisfy TypeScript
+  // FIX: Initialize with null so TypeScript is happy
   const requestRef = useRef<number | null>(null);
   
   // -- AI & Motion State --
@@ -102,7 +102,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
 
     try {
-      // FIX: Removed 'zoom: true' to prevent TypeScript error
+      // FIX: Removed 'zoom: true' to fix type error
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: targetMode,

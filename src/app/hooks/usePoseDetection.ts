@@ -15,7 +15,7 @@ export function usePoseDetection() {
         const newLandmarker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
-            delegate: "CPU" // <--- CHANGED FROM "GPU" TO "CPU" (Fixes iPhone Crash)
+            delegate: "CPU" // <--- CRITICAL FIX FOR IPHONE (Was "GPU")
           },
           runningMode: "VIDEO",
           numPoses: 1,
