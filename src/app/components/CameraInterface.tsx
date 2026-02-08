@@ -16,6 +16,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef<number>(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // -- Optimization Refs --
   const isApplyingZoom = useRef(false);
   const pendingZoom = useRef<number | null>(null);
 
@@ -28,11 +30,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [flashActive, setFlashActive] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   
-  // Settings & Cooldown
+  // Settings
   const [timerDuration, setTimerDuration] = useState(3);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
-  const [cooldown, setCooldown] = useState(0); // New: Rate Limit Timer
-
+  
   // Zoom State
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
@@ -47,7 +48,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         const marker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-            delegate: "GPU"
+            delegate: "GPU" // Or "CPU" if iPhone crashes
           },
           runningMode: "VIDEO",
           numPoses: 1
@@ -60,7 +61,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     loadAI();
   }, []);
 
-  // 2. HELPER: MOVEMENT MATH
+  // 2. MOVEMENT MATH
   const calculateMovement = (current: any[], previous: any[] | null): number => {
     if (!previous) return 999;
     const keyPoints = [0, 11, 12, 23, 24]; 
@@ -97,13 +98,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
         if (results.landmarks && results.landmarks.length > 0) {
           const landmarks = results.landmarks[0];
+          
           const drawingUtils = new DrawingUtils(ctx);
           drawingUtils.drawLandmarks(landmarks, { radius: 3, color: '#00ff88', fillColor: '#000' });
           drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
-          // Motion Logic (Only if not in cooldown)
-          if (autoCaptureEnabled && countdown === null && cooldown === 0 && !isProcessing) {
+          if (autoCaptureEnabled && countdown === null && !isProcessing) {
             const movement = calculateMovement(landmarks, previousLandmarks.current);
+            
             if (movement < 0.008) {
               stillFrames.current++;
               if (stillFrames.current === 30 && !countdownTimer.current) {
@@ -120,7 +122,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // 4. COUNTDOWN SEQUENCE
+  // 4. COUNTDOWN
   const startCountdownSequence = () => {
     let count = timerDuration;
     setCountdown(count);
@@ -211,8 +213,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
   };
 
-  // 7. CAPTURE & COOLDOWN HANDLING
-  const captureFrame = async () => {
+  // 7. CAPTURE
+  const captureFrame = () => {
     if (!videoRef.current) return;
     
     setFlashActive(true);
@@ -252,18 +254,19 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     ctx.drawImage(video, startX, startY, targetW, targetH, 0, 0, targetW, targetH);
     ctx.restore();
 
-    // Call the parent capture function
     onCapture(canvas.toDataURL('image/jpeg', 0.95));
   };
-  
-  // Listen for "RATE_LIMIT" signal from parent (You'll need to pass this prop down eventually, 
-  // but for now we manage local cooldown if we get slammed)
+
+  // Cleanup
   useEffect(() => {
-    if (cooldown > 0) {
-      const timer = setTimeout(() => setCooldown(c => c - 1), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [cooldown]);
+    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (countdownTimer.current) clearInterval(countdownTimer.current);
+      if (videoRef.current?.srcObject) {
+         (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
 
   const switchCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
@@ -280,7 +283,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         <div style={{ position: 'fixed', inset: 0, background: 'white', zIndex: 9999, pointerEvents: 'none', animation: 'fadeOut 0.15s ease-out' }} />
       )}
 
-      {/* Top Bar */}
       {cameraStarted && (
         <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', marginBottom: '20px', padding: '0 10px' }}>
           <button onClick={() => setIsMirrored(!isMirrored)} style={btnStyle}>
@@ -300,7 +302,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         </div>
       )}
 
-      {/* Viewfinder */}
       <div style={{
         position: 'relative', width: '100%',
         aspectRatio: cameraStarted ? (format === 'square' ? '1/1' : format === 'vertical' ? '9/16' : '4/3') : 'auto',
@@ -330,25 +331,18 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* Status Badge */}
         {cameraStarted && autoCaptureEnabled && countdown === null && (
            <div style={{
              position: 'absolute', top: '20px', 
-             background: cooldown > 0 ? 'rgba(255, 0, 0, 0.8)' : 'rgba(0,0,0,0.6)', 
-             padding: '6px 12px', borderRadius: '20px',
+             background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '20px',
              color: '#fff', fontSize: '12px', fontWeight: 'bold', 
              backdropFilter: 'blur(4px)'
            }}>
-             {cooldown > 0 
-                ? `Limit Reached: Wait ${cooldown}s` 
-                : isProcessing 
-                   ? "Processing..." 
-                   : landmarker ? "Detecting..." : "Loading AI..."}
+             {isProcessing ? "Processing..." : landmarker ? "Detecting..." : "Loading AI..."}
            </div>
         )}
       </div>
 
-      {/* Bottom Controls */}
       {cameraStarted && (
         <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
            
@@ -374,19 +368,15 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
           <button 
              onClick={captureFrame} 
-             disabled={isProcessing || cooldown > 0}
+             disabled={isProcessing}
              style={{
                width: '72px', height: '72px', borderRadius: '50%',
-               background: cooldown > 0 ? '#ff3333' : (isProcessing ? '#ccc' : '#fff'),
+               background: isProcessing ? '#ccc' : '#fff',
                border: '4px solid rgba(0,0,0,0)', outline: '4px solid #fff', outlineOffset: '4px',
-               cursor: (isProcessing || cooldown > 0) ? 'not-allowed' : 'pointer',
-               transform: isProcessing ? 'scale(0.9)' : 'scale(1)',
-               display: 'flex', alignItems: 'center', justifyContent: 'center',
-               fontSize: '14px', fontWeight: 'bold', color: 'white'
+               cursor: isProcessing ? 'wait' : 'pointer',
+               transform: isProcessing ? 'scale(0.9)' : 'scale(1)'
              }}
-          >
-            {cooldown > 0 ? `${cooldown}` : ""}
-          </button>
+          />
         </div>
       )}
     </div>
