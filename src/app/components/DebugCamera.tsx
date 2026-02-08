@@ -8,30 +8,44 @@ export default function DebugCamera() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number | null>(null);
   const { landmarker, isLoading } = usePoseDetection();
-  const [cameraActive, setCameraActive] = useState(false);
+  
+  // LOGGING STATE
+  const [logs, setLogs] = useState<string[]>([]);
+  
+  const addLog = (msg: string) => {
+    setLogs(prev => [msg, ...prev].slice(0, 5)); // Keep last 5 logs
+    console.log(msg);
+  };
 
   // 1. Start Camera
   useEffect(() => {
     async function startCam() {
       try {
+        addLog("Requesting Camera...");
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480 } // Keep resolution low for debugging
+          video: { 
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
         });
+        addLog("Camera Access GRANTED");
+        
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
+            addLog(`Video Ready: ${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}`);
             videoRef.current?.play();
-            setCameraActive(true);
           };
         }
-      } catch (e) {
-        console.error("Camera failed:", e);
+      } catch (e: any) {
+        addLog(`CAMERA ERROR: ${e.message}`);
       }
     }
     startCam();
   }, []);
 
-  // 2. The Debug Loop
+  // 2. The Loop
   const animate = () => {
     if (videoRef.current && canvasRef.current && landmarker) {
       const video = videoRef.current;
@@ -39,26 +53,23 @@ export default function DebugCamera() {
       const ctx = canvas.getContext('2d');
 
       if (ctx && video.readyState >= 2) {
-        // A. Match Dimensions Forcefully
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-
-        // B. Detect Pose
-        const results = landmarker.detectForVideo(video, performance.now());
-
-        // C. Clear Canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // D. DEBUG: Draw a Blue Box in corner to prove canvas is working
-        ctx.fillStyle = "blue";
+        // Draw Blue Box (Canvas Check)
+        ctx.fillStyle = "rgba(0, 0, 255, 0.5)";
         ctx.fillRect(10, 10, 50, 50);
 
-        // E. Draw Skeleton if found
+        // Detect
+        const startTime = performance.now();
+        const results = landmarker.detectForVideo(video, startTime);
+        
+        // Draw Skeleton
         if (results.landmarks && results.landmarks.length > 0) {
-          console.log("Skeleton Detected!"); // Check console for this
           const drawingUtils = new DrawingUtils(ctx);
           for (const landmark of results.landmarks) {
-            drawingUtils.drawLandmarks(landmark, { radius: 5, color: 'red' });
+            drawingUtils.drawLandmarks(landmark, { radius: 4, color: 'red' });
             drawingUtils.drawConnectors(landmark, PoseLandmarker.POSE_CONNECTIONS, { color: 'red', lineWidth: 4 });
           }
         }
@@ -68,35 +79,51 @@ export default function DebugCamera() {
   };
 
   useEffect(() => {
-    if (cameraActive && landmarker) {
-      console.log("Starting Debug Loop...");
+    if (landmarker) {
+      addLog("AI Model LOADED Success!");
       requestRef.current = requestAnimationFrame(animate);
+    } else {
+      addLog("Waiting for AI Model...");
     }
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [cameraActive, landmarker]);
+  }, [landmarker]);
 
   return (
-    <div style={{ padding: 20, background: '#333', color: 'white' }}>
-      <h1>DEBUG MODE</h1>
-      <p>AI Status: {isLoading ? "Loading..." : "READY"}</p>
+    <div style={{ position: 'relative', height: '100vh', background: '#000' }}>
+      {/* 1. Video Layer */}
+      <video 
+        ref={videoRef} 
+        autoPlay 
+        muted 
+        playsInline
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+      />
       
-      <div style={{ position: 'relative', width: 640, height: 480, border: '2px solid red' }}>
-        {/* Video Layer */}
-        <video 
-          ref={videoRef} 
-          autoPlay 
-          muted 
-          playsInline
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-        />
-        
-        {/* Canvas Layer */}
-        <canvas 
-          ref={canvasRef}
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10 }}
-        />
+      {/* 2. Canvas Layer */}
+      <canvas 
+        ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+
+      {/* 3. DEBUG LOG OVERLAY (Visible on Phone) */}
+      <div style={{
+        position: 'absolute', top: 100, left: 10, right: 10,
+        background: 'rgba(0,0,0,0.8)', padding: '10px',
+        color: '#00ff00', fontFamily: 'monospace', fontSize: '12px',
+        pointerEvents: 'none', borderRadius: '8px'
+      }}>
+        <h3 style={{ margin: '0 0 5px 0', color: 'white' }}>STATUS LOG:</h3>
+        {logs.map((log, i) => (
+          <div key={i} style={{ borderBottom: '1px solid #333', padding: '2px 0' }}>
+            {i === 0 ? '> ' : ''}{log}
+          </div>
+        ))}
+        <div style={{ marginTop: '10px', color: 'yellow' }}>
+           Blue Box Visible? {canvasRef.current ? "YES" : "NO"} <br/>
+           AI Loading? {isLoading ? "YES" : "NO"}
+        </div>
       </div>
     </div>
   );
