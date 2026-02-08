@@ -4,9 +4,6 @@ import {
   Camera, 
   SwitchCamera, 
   FlipHorizontal, 
-  Maximize2,
-  Image as ImageIcon,
-  Smartphone
 } from 'lucide-react';
 
 interface CameraInterfaceProps {
@@ -25,12 +22,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   // Auto-start camera on mount
   useEffect(() => {
-    // Optional: Auto-start if you want instant app-like feel
-    // startCamera(); 
+    // startCamera(); // Uncomment if you want instant start
   }, []);
 
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
     const targetMode = modeOverride || facingMode;
+    // Stop existing tracks if any
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
@@ -60,6 +57,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const switchCamera = () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newMode);
+    // Auto-mirror logic: Front=True, Back=False
     setIsMirrored(newMode === 'user');
     startCamera(newMode);
   };
@@ -115,7 +113,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       
-      {/* --- TOP TOOLBAR (Like iOS) --- */}
+      {/* --- TOP TOOLBAR --- */}
       {cameraStarted && (
         <div style={{ 
           display: 'flex', 
@@ -140,7 +138,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             <FlipHorizontal size={20} />
           </button>
 
-          {/* Format Selection (Text style like iOS) */}
+          {/* Format Selection (Text style) */}
           <div style={{ 
             display: 'flex', gap: '15px', 
             background: 'rgba(0,0,0,0.5)', padding: '5px 15px', borderRadius: '20px',
@@ -233,19 +231,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         />
       </div>
 
-      {/* --- BOTTOM CONTROLS --- */}
+      {/* --- BOTTOM CONTROLS (Centered Shutter) --- */}
       {cameraStarted && (
-        <div style={{ marginTop: '30px', display: 'flex', alignItems: 'center', gap: '30px' }}>
+        <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'center', width: '100%' }}>
           
-          {/* Gallery Preview Icon (Placeholder for now) */}
-          <div style={{ 
-            width: '45px', height: '45px', borderRadius: '8px', 
-            background: '#222', border: '1px solid #444',
-            display: 'flex', alignItems: 'center', justifyContent: 'center' 
-          }}>
-            <ImageIcon size={20} color="#666" />
-          </div>
-
           {/* iOS SHUTTER BUTTON */}
           <button 
             onClick={captureFrame} 
@@ -263,8 +252,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
             }}
           />
 
-          {/* Empty spacer to balance layout */}
-          <div style={{ width: '45px' }} />
         </div>
       )}
       
