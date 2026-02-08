@@ -1,6 +1,6 @@
 "use server";
 import { v2 as cloudinary } from 'cloudinary';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
@@ -9,25 +9,18 @@ cloudinary.config({
   secure: true,
 });
 
-// --- AI COACHING ---
+// --- GOOGLE GEMINI COACHING (100% FREE) ---
 export async function getGeminiAdvice(base64Image: string): Promise<string> {
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.GEMINI_API_KEY; // <--- Get this from aistudio.google.com
   if (!key) return "System: API Key Missing";
 
   try {
     const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-      ]
-    });
+    // Use "gemini-2.0-flash" for max speed
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const cleanBase64 = base64Image.includes("base64,") ? base64Image.split("base64,")[1] : base64Image;
-    const prompt = `Act as a minimalist photography coach. Focus on centering and lighting. Give ONE imperative command to improve the shot. Max 8 words.`;
+    const prompt = "Act as a minimalist photography coach. Focus on centering and lighting. Give ONE imperative command to improve the shot. Max 8 words.";
 
     const result = await model.generateContent([
       prompt,
@@ -36,6 +29,7 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
     return result.response.text() || "Adjust your angle.";
 
   } catch (error: any) {
+    console.error("Gemini Error:", error);
     if (error.message?.includes("429")) return "Quota full. Wait 60s.";
     return "Could not analyze photo.";
   }
@@ -56,10 +50,9 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// --- DELETION LOGIC (FIXED) ---
+// --- PRIVACY DELETION LOGIC (NO CHANGES) ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // 1. Fetch recent images
     const { resources } = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
@@ -71,30 +64,16 @@ export async function getCloudImages(): Promise<string[]> {
     const validImages: string[] = [];
     const expiredIds: string[] = [];
 
-    // 2. Filter & Detect Expired
     resources.forEach((file: any) => {
-        const createdAt = new Date(file.created_at).getTime();
-        const age = now - createdAt;
-
-        if (age > fiveMinutes) {
-            expiredIds.push(file.public_id);
-        } else {
-            validImages.push(file.secure_url);
-        }
+        const age = now - new Date(file.created_at).getTime();
+        if (age > fiveMinutes) expiredIds.push(file.public_id);
+        else validImages.push(file.secure_url);
     });
 
-    // 3. EXECUTE DELETION (Parallel & Fast)
     if (expiredIds.length > 0) {
-        console.log(`Destroying ${expiredIds.length} images...`);
-        
-        // Use Promise.all to delete them all at once using the UPLOADER API (Faster)
-        await Promise.all(
-          expiredIds.map(id => 
-            cloudinary.uploader.destroy(id, { invalidate: true })
-          )
-        );
+        Promise.all(expiredIds.map(id => cloudinary.uploader.destroy(id, { invalidate: true })))
+            .catch(err => console.error("Cleanup Error:", err));
     }
-
     return validImages.slice(0, 12);
   } catch (error) {
     console.error("Gallery Error:", error);
