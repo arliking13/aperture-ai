@@ -35,18 +35,12 @@ export async function getGeminiAdvice(base64Image: string): Promise<string> {
   }
 }
 
-// --- CLOUD STORAGE SECTION ---
-
 export async function uploadPhoto(base64Image: string): Promise<string> {
   try {
     const result = await cloudinary.uploader.upload(base64Image, {
       folder: 'aperture-ai',
       resource_type: 'image',
-      // This tag helps us identify and clean up images later
-      tags: ['temporary_capture'], 
-      // This metadata helps Cloudinary's background systems if you have 
-      // "Auto-Purge" enabled in your dashboard settings.
-      context: `expires_at=${Math.floor(Date.now() / 1000) + 300}` 
+      tags: ['temporary_capture']
     });
     return result.secure_url;
   } catch (error) {
@@ -55,21 +49,39 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
+// --- SELF-CLEANING GALLERY FETCH ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // We fetch images, but we've added a filter to only show 
-    // things uploaded in the last 5 minutes.
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    
+    // 1. Fetch
     const { resources } = await cloudinary.search
-      .expression(`folder:aperture-ai AND created_at >= ${fiveMinutesAgo}`)
+      .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
-      .max_results(12)
+      .max_results(20)
       .execute();
-      
-    return resources.map((file: any) => file.secure_url);
+
+    // 2. Filter & Collect garbage
+    const now = Date.now();
+    const fiveMinutes = 5 * 60 * 1000;
+    const validImages: string[] = [];
+    const expiredIds: string[] = [];
+
+    resources.forEach((file: any) => {
+        const createdAt = new Date(file.created_at).getTime();
+        // Check if older than 5 minutes
+        if (now - createdAt > fiveMinutes) {
+            expiredIds.push(file.public_id);
+        } else {
+            validImages.push(file.secure_url);
+        }
+    });
+
+    // 3. Delete expired images in background
+    if (expiredIds.length > 0) {
+        cloudinary.api.delete_resources(expiredIds).catch(err => console.error("Cleanup Error:", err));
+    }
+
+    return validImages.slice(0, 12);
   } catch (error) {
-    console.error("Gallery Fetch Error:", error);
     return [];
   }
 }

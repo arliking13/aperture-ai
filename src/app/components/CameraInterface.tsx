@@ -4,7 +4,7 @@ import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Sq
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { getGeminiAdvice } from '../actions'; 
 
-// --- STYLES MOVED TO TOP (Fixes Red Lines) ---
+// --- STYLES (Fixed "Cannot find name" error) ---
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
@@ -119,14 +119,12 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       }
   };
 
-  // --- CONNECT 5 ARGUMENTS ---
-  // shouldCapture = autoSessionActive (This allows lines to show when not recording)
+  // --- CONNECT 4-ARG HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, stability } = usePoseTracker(
     videoRef, 
     canvasRef, 
     performCapture, 
-    timerDuration || 3,
-    autoSessionActive 
+    timerDuration || 3
   );
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
@@ -195,14 +193,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     } catch (e) { alert("Camera Error: " + e); }
   };
 
-  // --- LOGIC FIX: If Auto is ON, START TRACKING (Preview Mode) ---
+  // --- LOGIC: Active only when Recording + Auto is On ---
   useEffect(() => { 
-      if (cameraStarted && autoCaptureEnabled) {
+      if (cameraStarted && autoCaptureEnabled && autoSessionActive) {
           startTracking(); 
       } else {
-          stopTracking(); // This will kill the ghost lines
+          stopTracking();
       }
-  }, [cameraStarted, autoCaptureEnabled, startTracking, stopTracking]);
+  }, [cameraStarted, autoCaptureEnabled, autoSessionActive, startTracking, stopTracking]);
 
   const toggleTimer = () => setTimerDuration(p => p === 0 ? 3 : p === 3 ? 5 : p === 5 ? 10 : 0);
   const switchCamera = async () => {
@@ -236,7 +234,11 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         <video ref={videoRef} autoPlay playsInline muted 
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStarted ? 'block' : 'none', transform: isMirrored ? 'scaleX(-1)' : 'none' }} 
         />
-        <canvas ref={canvasRef} 
+        
+        {/* --- NUCLEAR OPTION: This key destroys the canvas when mode changes --- */}
+        <canvas 
+          ref={canvasRef} 
+          key={autoCaptureEnabled ? 'auto' : 'manual'}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
@@ -257,8 +259,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
              border: stability > 0 ? '1px solid #00ff88' : '1px solid transparent',
              transition: 'all 0.2s'
            }}>
-             {/* If not recording, show PREVIEW instructions */}
-             {!autoSessionActive ? "Auto Standby (Press Shutter)" : (stability > 0 ? `Stabilizing... ${stability}%` : "Hold Pose")}
+             {stability > 0 ? `Stabilizing... ${stability}%` : "Pose to Start"}
            </div>
         )}
 
