@@ -9,13 +9,17 @@ interface CameraInterfaceProps {
 }
 
 export default function CameraInterface({ onCapture, isProcessing }: CameraInterfaceProps) {
-  // --- REFS (From Old Code) ---
+  // --- REFS ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef<number>(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // -- Optimization Refs --
+  const isApplyingZoom = useRef(false);
+  const pendingZoom = useRef<number | null>(null);
 
   // --- STATE ---
   const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
@@ -25,23 +29,28 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [isMirrored, setIsMirrored] = useState(true);
   const [flashActive, setFlashActive] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [poseScore, setPoseScore] = useState(0); // To track if AI sees you
+  const [isStill, setIsStill] = useState(false); // Used for UI feedback
   
   // Settings
   const [timerDuration, setTimerDuration] = useState(3);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+  
+  // Zoom State
+  const [zoom, setZoom] = useState(1);
+  const [zoomCap, setZoomCap] = useState<{min: number, max: number} | null>(null);
 
-  // 1. INITIALIZE AI (Exact logic from your old code)
+  // 1. INITIALIZE AI
   useEffect(() => {
     async function loadAI() {
       try {
+        console.log("Loading AI...");
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
         const marker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-            delegate: "GPU" // Keeping GPU as your old code used it successfully
+            delegate: "GPU" // Keeping GPU as your old code worked with it
           },
           runningMode: "VIDEO",
           numPoses: 1
@@ -55,7 +64,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     loadAI();
   }, []);
 
-  // 2. HELPER: MOVEMENT MATH (From Old Code)
+  // 2. HELPER: MOVEMENT MATH
   const calculateMovement = (current: any[], previous: any[] | null): number => {
     if (!previous) return 999;
     const keyPoints = [0, 11, 12, 23, 24]; // Nose, Shoulders, Hips
@@ -70,7 +79,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     return total / keyPoints.length;
   };
 
-  // 3. THE DETECTION LOOP (Adapted from Old Code)
+  // 3. THE DETECTION LOOP
   const detectPose = () => {
     if (!landmarker || !videoRef.current || videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(detectPose);
@@ -81,9 +90,10 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     const canvas = canvasRef.current;
     
     // Perform Detection
-    const results = landmarker.detectForVideo(video, performance.now());
+    const startTime = performance.now();
+    const results = landmarker.detectForVideo(video, startTime);
     
-    // Draw on Canvas (So you can see it working)
+    // Draw on Canvas
     if (canvas) {
       const ctx = canvas.getContext('2d');
       if (ctx) {
@@ -100,13 +110,14 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           drawingUtils.drawLandmarks(landmarks, { radius: 3, color: '#00ff88', fillColor: '#000' });
           drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
-          // --- MOTION LOGIC (From Old Code) ---
-          if (autoCaptureEnabled) {
+          // --- MOTION LOGIC ---
+          if (autoCaptureEnabled && countdown === null) {
             const movement = calculateMovement(landmarks, previousLandmarks.current);
             
             // Threshold: 0.008 (From your old code)
             if (movement < 0.008) {
               stillFrames.current++;
+              setIsStill(true);
               
               // Trigger at 30 frames (~1 sec)
               if (stillFrames.current === 30 && !countdownTimer.current) {
@@ -114,41 +125,45 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
               }
             } else {
               // Reset if moving
-              if (countdownTimer.current) {
-                clearInterval(countdownTimer.current);
-                countdownTimer.current = null;
-              }
               stillFrames.current = 0;
-              setCountdown(null);
+              setIsStill(false);
             }
             previousLandmarks.current = landmarks;
           }
+        } else {
+           // No person detected
+           stillFrames.current = 0;
+           setIsStill(false);
         }
       }
     }
     animationFrameRef.current = requestAnimationFrame(detectPose);
   };
 
-  // 4. COUNTDOWN SEQUENCE (Logic from Old Code)
+  // 4. COUNTDOWN SEQUENCE
   const startCountdownSequence = () => {
     let count = timerDuration;
     setCountdown(count);
     
+    // Clear any existing timer first
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+
     countdownTimer.current = setInterval(() => {
       count--;
       if (count <= 0) {
         clearInterval(countdownTimer.current!);
         countdownTimer.current = null;
-        captureFrame();
         setCountdown(null);
-        stillFrames.current = 0; // Reset after shot
+        captureFrame();
+        stillFrames.current = 0; 
+        setIsStill(false);
       } else {
         setCountdown(count);
       }
     }, 1000);
   };
 
-  // 5. START CAMERA (Standard logic)
+  // 5. START CAMERA
   const startCamera = async (modeOverride?: 'user' | 'environment') => {
     const targetMode = modeOverride || facingMode;
     
@@ -158,6 +173,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
 
     try {
+      // FIX: Removed 'zoom: true' to prevent TS error
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: targetMode,
@@ -168,10 +184,27 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadeddata = () => {
+        videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play();
           setCameraStarted(true);
-          detectPose(); // Start the loop immediately
+          detectPose(); // Start the loop
+          
+          // Get Zoom Capabilities
+          const track = stream.getVideoTracks()[0];
+          // @ts-ignore
+          if ('getCapabilities' in track) {
+            // @ts-ignore
+            const capabilities = track.getCapabilities();
+            // @ts-ignore
+            if (capabilities.zoom) {
+              // @ts-ignore
+              setZoomCap({ min: capabilities.zoom.min, max: capabilities.zoom.max });
+              // @ts-ignore
+              setZoom(capabilities.zoom.min);
+            } else {
+              setZoomCap(null);
+            }
+          }
         };
       }
     } catch (err) {
@@ -180,7 +213,37 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     }
   };
 
-  // 6. CAPTURE FRAME (Standard Logic)
+  // 6. ZOOM HANDLER
+  const updateZoom = (newZoom: number) => {
+    setZoom(newZoom);
+    pendingZoom.current = newZoom;
+    if (!isApplyingZoom.current) applyZoomToHardware();
+  };
+
+  const applyZoomToHardware = async () => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    const stream = videoRef.current.srcObject as MediaStream;
+    const track = stream.getVideoTracks()[0];
+    // @ts-ignore
+    if (!track.applyConstraints) return;
+
+    isApplyingZoom.current = true;
+    try {
+      while (pendingZoom.current !== null) {
+        const zoomToApply = pendingZoom.current;
+        pendingZoom.current = null;
+        // @ts-ignore
+        await track.applyConstraints({ advanced: [{ zoom: zoomToApply }] });
+      }
+    } catch (err) {
+      console.error("Zoom apply error", err);
+    } finally {
+      isApplyingZoom.current = false;
+      if (pendingZoom.current !== null) applyZoomToHardware();
+    }
+  };
+
+  // 7. CAPTURE FRAME
   const captureFrame = () => {
     if (!videoRef.current) return;
     
@@ -329,10 +392,11 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
            <div style={{
              position: 'absolute', top: '20px', 
              background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '20px',
-             color: '#fff', fontSize: '12px', fontWeight: 'bold', 
-             backdropFilter: 'blur(4px)'
+             color: isStill ? '#00ff88' : '#fff', fontSize: '12px', fontWeight: 'bold', 
+             backdropFilter: 'blur(4px)',
+             border: isStill ? '1px solid #00ff88' : 'none'
            }}>
-             {landmarker ? "Detecting..." : "Loading AI..."}
+             {landmarker ? (isStill ? "Hold Still..." : "Detecting...") : "Loading AI..."}
            </div>
         )}
       </div>
@@ -340,6 +404,24 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       {/* Bottom Controls */}
       {cameraStarted && (
         <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+           
+           {/* Zoom Slider */}
+           {zoomCap && (
+              <div style={{ width: '100%', maxWidth: '300px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '12px', color: '#666' }}>1x</span>
+                <input 
+                  type="range" 
+                  min={zoomCap.min} 
+                  max={zoomCap.max} 
+                  step="0.1" 
+                  value={zoom} 
+                  onChange={(e) => updateZoom(parseFloat(e.target.value))}
+                  style={{ flex: 1, accentColor: '#ffd700', cursor: 'grab' }}
+                />
+                <span style={{ fontSize: '12px', color: '#666' }}>{zoomCap.max.toFixed(1)}x</span>
+              </div>
+            )}
+
            <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', background: 'rgba(30,30,30,0.8)', padding: '8px 20px', borderRadius: '25px'}}>
             {['vertical', 'album', 'square'].map(f => (
               <span key={f} onClick={() => setFormat(f as any)} 

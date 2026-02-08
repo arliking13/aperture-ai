@@ -1,21 +1,15 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
-import { usePoseDetection } from '../hooks/usePoseDetection';
-import { DrawingUtils, PoseLandmarker } from '@mediapipe/tasks-vision';
+import { usePoseTracker } from '../hooks/usePoseTracker'; 
 
 export default function DebugCamera() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number | null>(null);
-  const { landmarker, isLoading } = usePoseDetection();
-  
-  // LOGGING STATE
+  const [cameraActive, setCameraActive] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  
-  const addLog = (msg: string) => {
-    setLogs(prev => [msg, ...prev].slice(0, 5)); // Keep last 5 logs
-    console.log(msg);
-  };
+
+  // Simple logger
+  const addLog = (msg: string) => setLogs(prev => [msg, ...prev].slice(0, 5));
 
   // 1. Start Camera
   useEffect(() => {
@@ -23,19 +17,16 @@ export default function DebugCamera() {
       try {
         addLog("Requesting Camera...");
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            facingMode: 'user',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          }
+          video: { facingMode: 'user', width: 640, height: 480 }
         });
         addLog("Camera Access GRANTED");
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
-            addLog(`Video Ready: ${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}`);
             videoRef.current?.play();
+            setCameraActive(true);
+            addLog(`Video Active: ${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}`);
           };
         }
       } catch (e: any) {
@@ -45,84 +36,54 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
-  // 2. The Loop
-  const animate = () => {
-    if (videoRef.current && canvasRef.current && landmarker) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
+  // 2. Use the Modular AI Hook
+  // FIX: We cast the refs with "as React.RefObject<...>" to solve the Line 41 red error
+  const { isAiLoading, startTracking, isStill, countdown } = usePoseTracker(
+    videoRef as React.RefObject<HTMLVideoElement>,
+    canvasRef as React.RefObject<HTMLCanvasElement>,
+    () => addLog("📸 SNAPSHOT TRIGGERED!"), 
+    3 
+  );
 
-      if (ctx && video.readyState >= 2) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Draw Blue Box (Canvas Check)
-        ctx.fillStyle = "rgba(0, 0, 255, 0.5)";
-        ctx.fillRect(10, 10, 50, 50);
-
-        // Detect
-        const startTime = performance.now();
-        const results = landmarker.detectForVideo(video, startTime);
-        
-        // Draw Skeleton
-        if (results.landmarks && results.landmarks.length > 0) {
-          const drawingUtils = new DrawingUtils(ctx);
-          for (const landmark of results.landmarks) {
-            drawingUtils.drawLandmarks(landmark, { radius: 4, color: 'red' });
-            drawingUtils.drawConnectors(landmark, PoseLandmarker.POSE_CONNECTIONS, { color: 'red', lineWidth: 4 });
-          }
-        }
-      }
-    }
-    requestRef.current = requestAnimationFrame(animate);
-  };
-
+  // 3. Start AI when camera is ready
   useEffect(() => {
-    if (landmarker) {
-      addLog("AI Model LOADED Success!");
-      requestRef.current = requestAnimationFrame(animate);
-    } else {
-      addLog("Waiting for AI Model...");
+    if (cameraActive) {
+      addLog("Starting AI Tracker...");
+      startTracking();
     }
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    };
-  }, [landmarker]);
+  }, [cameraActive]);
 
   return (
-    <div style={{ position: 'relative', height: '100vh', background: '#000' }}>
-      {/* 1. Video Layer */}
+    <div style={{ position: 'relative', height: '100vh', background: '#000', color: 'lime', fontFamily: 'monospace' }}>
+      {/* Video Layer - Added playsInline for iPhone support */}
       <video 
         ref={videoRef} 
-        autoPlay 
-        muted 
-        playsInline
+        autoPlay muted playsInline
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
       />
       
-      {/* 2. Canvas Layer */}
+      {/* Canvas Layer (Red Skeleton) */}
       <canvas 
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
       />
 
-      {/* 3. DEBUG LOG OVERLAY (Visible on Phone) */}
-      <div style={{
-        position: 'absolute', top: 100, left: 10, right: 10,
-        background: 'rgba(0,0,0,0.8)', padding: '10px',
-        color: '#00ff00', fontFamily: 'monospace', fontSize: '12px',
-        pointerEvents: 'none', borderRadius: '8px'
+      {/* DEBUG OVERLAY */}
+      <div style={{ 
+        position: 'absolute', top: 50, left: 10, right: 10, 
+        background: 'rgba(0,0,0,0.8)', padding: '15px', borderRadius: '8px', pointerEvents: 'none' 
       }}>
-        <h3 style={{ margin: '0 0 5px 0', color: 'white' }}>STATUS LOG:</h3>
-        {logs.map((log, i) => (
-          <div key={i} style={{ borderBottom: '1px solid #333', padding: '2px 0' }}>
-            {i === 0 ? '> ' : ''}{log}
-          </div>
-        ))}
-        <div style={{ marginTop: '10px', color: 'yellow' }}>
-           Blue Box Visible? {canvasRef.current ? "YES" : "NO"} <br/>
-           AI Loading? {isLoading ? "YES" : "NO"}
+        <h3 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #333' }}>DEBUGGER</h3>
+        
+        <div>AI Loaded: {isAiLoading ? "⏳ LOADING..." : "✅ READY"}</div>
+        <div>Tracking: {isStill ? "✋ HOLD STILL" : "🏃 MOVING"}</div>
+        <div>Countdown: {countdown !== null ? `⏰ ${countdown}` : "--"}</div>
+        
+        <div style={{ marginTop: '15px', fontSize: '12px', color: '#ccc' }}>
+          {/* FIX: Corrected the ">>" typo here */}
+          {logs.map((log, i) => (
+             <div key={i}>{'>'} {log}</div>
+          ))}
         </div>
       </div>
     </div>
