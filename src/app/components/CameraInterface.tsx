@@ -23,6 +23,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isMirrored, setIsMirrored] = useState(true);
+  const [flashActive, setFlashActive] = useState(false); // NEW: Flash State
   
   // ZOOM STATES
   const [zoom, setZoom] = useState(1);
@@ -76,13 +77,8 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   // --- SMOOTH ZOOM HANDLER ---
   const updateZoom = (newZoom: number) => {
-    // 1. Update UI Instantly
     setZoom(newZoom);
-    
-    // 2. Queue for Hardware
     pendingZoom.current = newZoom;
-
-    // 3. Process Queue
     if (!isApplyingZoom.current) {
       applyZoomToHardware();
     }
@@ -100,8 +96,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     try {
       while (pendingZoom.current !== null) {
         const zoomToApply = pendingZoom.current;
-        pendingZoom.current = null; // Clear immediately so new inputs can fill it
-        
+        pendingZoom.current = null;
         // @ts-ignore
         await track.applyConstraints({ advanced: [{ zoom: zoomToApply }] });
       }
@@ -109,7 +104,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
       console.error("Zoom apply error", err);
     } finally {
       isApplyingZoom.current = false;
-      // Double check if user moved slider while we were applying
       if (pendingZoom.current !== null) applyZoomToHardware();
     }
   };
@@ -123,6 +117,11 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   const captureFrame = () => {
     if (!videoRef.current || !canvasRef.current) return;
+    
+    // 1. Trigger Flash Effect
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 150); // Flash lasts 150ms
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -171,6 +170,18 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   return (
     <div style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       
+      {/* --- FLASH OVERLAY --- */}
+      {flashActive && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, width: '100vw', height: '100vh',
+          background: 'white',
+          zIndex: 9999,
+          pointerEvents: 'none', // Lets clicks pass through so it doesn't block UI
+          animation: 'fadeOut 0.15s ease-out'
+        }} />
+      )}
+
       {/* --- TOP TOOLBAR --- */}
       {cameraStarted && (
         <div style={{ 
@@ -275,7 +286,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           {zoomCap && (
             <div style={{ width: '100%', maxWidth: '320px', marginBottom: '25px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
               
-              {/* Preset Buttons (iPhone Style) */}
+              {/* Preset Buttons */}
               <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
                 {[1, 2, 3].map((level) => {
                   if (level > zoomCap.max || level < zoomCap.min) return null;
