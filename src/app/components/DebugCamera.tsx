@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from 'react';
-import { usePoseTracker } from '../hooks/usePoseTracker'; // Works now that file exists
+import { usePoseTracker } from '../hooks/usePoseTracker'; // Make sure file exists at this path!
 
 export default function DebugCamera() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -15,7 +15,7 @@ export default function DebugCamera() {
       try {
         addLog("Requesting Camera...");
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 640, height: 480 }
+            video: { facingMode: 'user', width: 640, height: 480 }
         });
         addLog("Camera Access GRANTED");
         if (videoRef.current) {
@@ -31,9 +31,11 @@ export default function DebugCamera() {
     startCam();
   }, []);
 
-  // Use hook (Types are fixed in the hook now)
+  // FIX: Cast refs to specific types to satisfy TypeScript strict mode
   const { isAiReady, startTracking, isStill, countdown } = usePoseTracker(
-    videoRef, canvasRef, () => addLog("📸 SNAP!"), 3, true
+    videoRef as React.RefObject<HTMLVideoElement>,
+    canvasRef as React.RefObject<HTMLCanvasElement>,
+    () => addLog("📸 SNAP!"), 3, true
   );
 
   useEffect(() => {
