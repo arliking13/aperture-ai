@@ -1,35 +1,26 @@
 "use client";
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { uploadPhoto, getCloudImages } from './actions';
 import CameraInterface from './components/CameraInterface';
-import { X, Download, RefreshCw } from 'lucide-react'; 
+import { X, Download } from 'lucide-react'; 
 
 export default function Home() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
-  // Define loadGallery as a reusable function
-  const loadGallery = useCallback(async () => {
-    try {
-      const cloudPhotos = await getCloudImages();
-      setPhotos(cloudPhotos);
-    } catch (e) {
-      console.error("Gallery Load Error:", e);
-    }
-  }, []);
-
-  // Initial Load + Auto-Refresh Interval
+  // Load gallery on mount
   useEffect(() => {
+    const loadGallery = async () => {
+      try {
+        const cloudPhotos = await getCloudImages();
+        setPhotos(cloudPhotos);
+      } catch (e) {
+        console.error("Gallery Load Error:", e);
+      }
+    };
     loadGallery();
-
-    // Poll every 30 seconds to clean up old images on the server
-    const intervalId = setInterval(() => {
-      loadGallery();
-    }, 30000);
-
-    return () => clearInterval(intervalId);
-  }, [loadGallery]);
+  }, []);
 
   const handleCapture = async (base64Image: string) => {
     setUploading(true);
@@ -40,8 +31,7 @@ export default function Home() {
       const url = await uploadPhoto(base64Image);
       if (url && url.startsWith('http')) {
          // Replace base64 with real URL once uploaded
-         // Triggers a gallery refresh to ensure sync
-         loadGallery(); 
+         setPhotos(prev => [url, ...prev.slice(1)]);
       }
     } catch (error) {
       console.error('Upload Error:', error);
@@ -69,16 +59,11 @@ export default function Home() {
         <h3 style={{ 
           borderBottom: '1px solid #333', paddingBottom: '10px',
           marginBottom: '15px', color: '#888', fontSize: '0.9rem',
-          textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+          textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', justifyContent: 'space-between'
         }}>
           <span>Cloud Gallery</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{fontSize: '0.7rem', color: '#ff3b30', fontWeight: 'bold'}}>Auto-Delete: 5m</span>
-            {/* Manual Refresh Button (Optional but helpful) */}
-            <button onClick={loadGallery} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#666' }}>
-               <RefreshCw size={14} />
-            </button>
-          </div>
+          {/* THE NOTE YOU REQUESTED */}
+          <span style={{fontSize: '0.7rem', color: '#ff3b30', fontWeight: 'bold'}}>Auto-Delete: 5m</span>
         </h3>
         
         {photos.length === 0 ? (
