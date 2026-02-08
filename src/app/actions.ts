@@ -1,7 +1,7 @@
 "use server";
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
-// RENAMED: Changed from 'analyzePoseData' to 'getGeminiAdvice' to match your import
+// EXPORT NAME MATCHES YOUR COMPONENT IMPORT
 export async function getGeminiAdvice(poseDescription: string): Promise<string> {
   try {
     const key = process.env.GEMINI_API_KEY;
@@ -12,7 +12,7 @@ export async function getGeminiAdvice(poseDescription: string): Promise<string> 
 
     const genAI = new GoogleGenerativeAI(key);
     
-    // Using 'gemini-2.0-flash' as it worked for you previously
+    // FIX: Reverted to 'gemini-2.0-flash' because your earlier logs proved this model exists for you.
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.0-flash", 
       safetySettings: [
@@ -40,7 +40,7 @@ export async function getGeminiAdvice(poseDescription: string): Promise<string> 
   } catch (error: any) {
     console.error("AI Error:", error.message);
     
-    // Fallback responses if AI fails
+    // If you hit the rate limit (429) again, we return a fallback so the app doesn't crash
     if (error.message.includes("429")) return "Great pose! Hold it!"; 
     if (error.message.includes("404")) return "Looking good!";
     
