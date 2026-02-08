@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
-// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
 const FRAMES_TO_LOCK = 60; // ~2 Seconds
 
@@ -35,7 +34,6 @@ export function usePoseTracker(
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. Load AI
   useEffect(() => {
     async function loadAI() {
       try {
@@ -59,8 +57,7 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  // 2. Detection Loop
-  const detectPose = useCallback(() => {
+  const detectPose = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -81,7 +78,6 @@ export function usePoseTracker(
         const landmarks = results.landmarks[0];
         
         const movement = calculateMovement(landmarks, previousLandmarks.current);
-        
         if (movement < MOVEMENT_THRESHOLD) {
             stillFrames.current = Math.min(FRAMES_TO_LOCK, stillFrames.current + 1);
         } else {
@@ -109,7 +105,7 @@ export function usePoseTracker(
       }
     }
     requestRef.current = requestAnimationFrame(detectPose);
-  }, [landmarker, timerDuration, onCaptureTrigger]);
+  };
 
   const startCountdown = () => {
     let count = timerDuration;
@@ -130,12 +126,11 @@ export function usePoseTracker(
     }, 1000);
   };
 
-  const startTracking = useCallback(() => {
+  const startTracking = () => {
     if (!requestRef.current) detectPose();
-  }, [detectPose]);
+  };
 
-  // --- STOP TRACKING & WIPE ---
-  const stopTracking = useCallback(() => {
+  const stopTracking = () => {
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
@@ -150,16 +145,22 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // Manual wipe logic
+    // Standard wipe
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      }
+      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
-  }, []);
+  };
 
-  useEffect(() => { return () => stopTracking(); }, [stopTracking]);
+  useEffect(() => { return () => stopTracking(); }, []);
 
-  return { isAiReady, startTracking, stopTracking, countdown, stability, isStill: stability > 20 };
+  // Returns exact props for interface + isStill for Debugger
+  return { 
+    isAiReady, 
+    startTracking, 
+    stopTracking, 
+    countdown, 
+    stability,
+    isStill: stability > 20 
+  };
 }

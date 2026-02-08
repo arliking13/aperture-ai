@@ -49,17 +49,15 @@ export async function uploadPhoto(base64Image: string): Promise<string> {
   }
 }
 
-// --- SELF-CLEANING GALLERY ---
+// --- SELF-CLEANING GALLERY FETCH ---
 export async function getCloudImages(): Promise<string[]> {
   try {
-    // 1. Fetch recent images
     const { resources } = await cloudinary.search
       .expression('folder:aperture-ai')
       .sort_by('created_at', 'desc')
       .max_results(20)
       .execute();
 
-    // 2. Identify expired images (older than 5 mins)
     const now = Date.now();
     const fiveMinutes = 5 * 60 * 1000;
     const validImages: string[] = [];
@@ -74,7 +72,7 @@ export async function getCloudImages(): Promise<string[]> {
         }
     });
 
-    // 3. Delete them from Cloudinary in the background
+    // Delete expired images
     if (expiredIds.length > 0) {
         cloudinary.api.delete_resources(expiredIds).catch(err => console.error("Cleanup Error:", err));
     }
