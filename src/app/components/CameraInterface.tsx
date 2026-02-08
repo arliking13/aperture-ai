@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff, Square } from 'lucide-react';
+import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff, Square, Sparkles } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { takeSnapshot } from '../utils/cameraHelpers';
 
@@ -25,23 +25,42 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
   const [autoSessionActive, setAutoSessionActive] = useState(false);
+  
+  // New State for Advice
+  const [currentAdvice, setCurrentAdvice] = useState<string | null>(null);
 
-  const performCapture = useCallback(() => {
-    if (!videoRef.current) return;
-    setFlashActive(true);
-    setTimeout(() => setFlashActive(false), 150);
-    const image = takeSnapshot(videoRef.current, format, isMirrored);
-    if (image) onCapture(image);
-  }, [format, isMirrored, onCapture]);
-
-  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill } = usePoseTracker(
+  // --- AI HOOK ---
+  const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill, getInstantAdvice } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
-    performCapture, 
+    () => performCapture(), // Wrap function to avoid circular dependency
     timerDuration, 
     autoCaptureEnabled,
     autoSessionActive
   );
+
+  const performCapture = useCallback(async () => {
+    if (!videoRef.current) return;
+    
+    // 1. Flash
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 150);
+
+    // 2. Take Photo
+    const image = takeSnapshot(videoRef.current, format, isMirrored);
+    if (image) onCapture(image);
+
+    // 3. GET ADVICE (The new logic)
+    // Run analysis on the frame we just captured
+    if (getInstantAdvice) {
+        const advice = await getInstantAdvice();
+        if (advice) {
+            setCurrentAdvice(advice);
+            // Optional: Hide advice after 6 seconds so it's not annoying
+            // setTimeout(() => setCurrentAdvice(null), 6000);
+        }
+    }
+  }, [format, isMirrored, onCapture, getInstantAdvice]);
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
@@ -49,6 +68,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
     if (isProcessing) return;
     if (autoCaptureEnabled) {
         setAutoSessionActive(!autoSessionActive);
+        if (!autoSessionActive) setCurrentAdvice(null); // Clear old advice on start
         return;
     }
     if (timerDuration === 0) {
@@ -88,17 +108,9 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
          const oldStream = videoRef.current.srcObject as MediaStream;
          oldStream.getTracks().forEach(track => track.stop());
       }
-
-      // FIX: Cast the inner object to 'any' to force TypeScript to accept 'zoom'
       const constraints = {
-        video: { 
-          facingMode: modeToUse, 
-          width: { ideal: 1920 }, 
-          height: { ideal: 1080 }, 
-          zoom: true 
-        } as any 
+        video: { facingMode: modeToUse, width: { ideal: 1920 }, height: { ideal: 1080 }, zoom: true } as any
       };
-
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -179,6 +191,23 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
+        {/* --- ADVICE BUBBLE --- */}
+        {/* Only show if we have advice AND no active countdown */}
+        {currentAdvice && activeCountdown === null && cameraStarted && (
+            <div style={{ 
+                position: 'absolute', bottom: 30, left: 20, right: 20,
+                background: 'rgba(255, 255, 255, 0.95)', 
+                color: '#000', padding: '15px', borderRadius: '16px',
+                fontSize: 14, fontWeight: '600', lineHeight: '1.4',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                display: 'flex', gap: 10, alignItems: 'center', animation: 'slideUp 0.3s ease-out'
+            }}>
+                <Sparkles size={20} color="#ffd700" style={{flexShrink:0}} />
+                <span>{currentAdvice}</span>
+            </div>
+        )}
+
+        {/* STATUS INDICATOR (Top) */}
         {cameraStarted && autoCaptureEnabled && activeCountdown === null && (
            <div style={{ position: 'absolute', top: 20, background: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: 20, color: '#fff', fontSize: 12, fontWeight: 'bold', backdropFilter: 'blur(4px)', border: (isStill && autoSessionActive) ? '1px solid #00ff88' : '1px solid transparent', display: 'flex', alignItems: 'center', gap: 6 }}>
              {autoSessionActive && <div style={{width:8, height:8, borderRadius:'50%', background:'#ff3b30', animation:'pulse 1s infinite'}} />}

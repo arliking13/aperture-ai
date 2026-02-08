@@ -1,27 +1,31 @@
-import { useState, useEffect, useRef } from 'react';
+// src/app/hooks/usePoseTracker.ts
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
+import * as tf from '@tensorflow/tfjs';
+import * as cocossd from '@tensorflow-models/coco-ssd';
 import { calculateMovement } from '../utils/cameraHelpers';
+import { generateSmartAdvice, analyzeBrightness } from '../utils/smartAdvice';
 
 export function usePoseTracker(
   videoRef: React.RefObject<HTMLVideoElement>,
   canvasRef: React.RefObject<HTMLCanvasElement>,
   onCaptureTrigger: () => void,
   timerDuration: number,
-  isAutoEnabled: boolean,    // If true: Load AI and draw green lines
-  isSessionActive: boolean   // If true: Actually count down and take photos
+  isAutoEnabled: boolean,
+  isSessionActive: boolean
 ) {
   const [isAiReady, setIsAiReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isStill, setIsStill] = useState(false);
 
-  // Internal Refs
+  // Refs
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  const objectModelRef = useRef<cocossd.ObjectDetection | null>(null);
   const requestRef = useRef<number | null>(null);
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
   
-  // Refs for loop access
   const isAutoRef = useRef(isAutoEnabled);
   const isSessionRef = useRef(isSessionActive);
   const captureRef = useRef(onCaptureTrigger);
@@ -30,39 +34,18 @@ export function usePoseTracker(
   useEffect(() => { isSessionRef.current = isSessionActive; }, [isSessionActive]);
   useEffect(() => { captureRef.current = onCaptureTrigger; }, [onCaptureTrigger]);
 
-  // Cleanup when turning off Auto
+  // Cleanup
   useEffect(() => {
     if (!isAutoEnabled) {
-        if (countdownTimer.current) {
-            clearInterval(countdownTimer.current);
-            countdownTimer.current = null;
-        }
+        if (countdownTimer.current) clearInterval(countdownTimer.current);
         setCountdown(null);
         setIsStill(false);
-        stillFrames.current = 0;
-        
-        if (canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
     }
   }, [isAutoEnabled]);
 
-  // Reset session state when stopping/starting session
+  // Load Models
   useEffect(() => {
-    if (!isSessionActive) {
-        if (countdownTimer.current) {
-            clearInterval(countdownTimer.current);
-            countdownTimer.current = null;
-        }
-        setCountdown(null);
-        stillFrames.current = 0;
-        setIsStill(false);
-    }
-  }, [isSessionActive]);
-
-  useEffect(() => {
-    async function loadAI() {
+    async function loadModels() {
       try {
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
         const marker = await PoseLandmarker.createFromOptions(vision, {
@@ -70,14 +53,42 @@ export function usePoseTracker(
           runningMode: "VIDEO", numPoses: 1
         });
         landmarkerRef.current = marker;
+
+        await tf.ready();
+        const model = await cocossd.load();
+        objectModelRef.current = model;
+
         setIsAiReady(true);
-      } catch (err) { console.error(err); }
+      } catch (err) { console.error("AI Load Error:", err); }
     }
-    loadAI();
+    loadModels();
   }, []);
 
-  const detectPose = () => {
-    // 1. If Auto is OFF, do nothing
+  // --- NEW: ON-DEMAND ANALYSIS FUNCTION ---
+  // This is called by the UI *after* taking a photo
+  const getInstantAdvice = useCallback(async () => {
+      if (!videoRef.current || !canvasRef.current || !objectModelRef.current || !landmarkerRef.current) return null;
+      
+      const video = videoRef.current;
+      const ctx = canvasRef.current.getContext('2d');
+      if (!ctx) return null;
+
+      // 1. Get Objects
+      const predictions = await objectModelRef.current.detect(video);
+      
+      // 2. Get Pose (Snapshot)
+      const poseResult = landmarkerRef.current.detectForVideo(video, performance.now());
+      const landmarks = poseResult.landmarks ? poseResult.landmarks[0] : [];
+
+      // 3. Get Brightness
+      const brightness = analyzeBrightness(ctx, canvasRef.current.width, canvasRef.current.height);
+
+      // 4. Generate Advice
+      return generateSmartAdvice(landmarks, predictions, brightness);
+  }, []);
+
+  // Continuous Pose Loop (For Auto-Trigger Logic Only)
+  const detectPose = async () => {
     if (!isAutoRef.current) {
          requestRef.current = requestAnimationFrame(detectPose);
          return;
@@ -94,17 +105,14 @@ export function usePoseTracker(
         
         if (results.landmarks && results.landmarks.length > 0) {
             const landmarks = results.landmarks[0];
-            
-            // 2. ALWAYS DRAW LINES (Visual Feedback)
             const drawingUtils = new DrawingUtils(ctx);
             drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
 
-            // 3. ONLY PROCESS CAPTURE IF SESSION IS ACTIVE
+            // Session Logic (Stillness Detection)
             if (isSessionRef.current && !countdownTimer.current) {
                 if (calculateMovement(landmarks, previousLandmarks.current) < 0.008) {
                     stillFrames.current++;
                     setIsStill(true);
-                    // Wait for ~1.5 seconds of stillness before triggering countdown
                     if (stillFrames.current > 45) startCountdown();
                 } else { 
                     stillFrames.current = 0; 
@@ -123,36 +131,26 @@ export function usePoseTracker(
 
   const startCountdown = () => {
     if (!isSessionRef.current) return;
-
-    // Instant Snap logic (if timer is 0)
     if (timerDuration === 0) {
         if (captureRef.current) captureRef.current();
         stillFrames.current = 0; 
         return;
     }
-
     let count = timerDuration;
     setCountdown(count);
-    
     countdownTimer.current = setInterval(() => {
-      // Emergency Abort
       if (!isSessionRef.current || !isAutoRef.current) {
           clearInterval(countdownTimer.current!);
           countdownTimer.current = null;
           setCountdown(null);
           return;
       }
-
       count--;
       if (count <= 0) {
         clearInterval(countdownTimer.current!);
         countdownTimer.current = null;
         setCountdown(null);
-        
-        // CAPTURE!
         if (captureRef.current) captureRef.current();
-        
-        // RESET FOR NEXT POSE (Continuous Loop)
         stillFrames.current = 0; 
         setIsStill(false);
       } else { setCountdown(count); }
@@ -163,5 +161,5 @@ export function usePoseTracker(
   const stopTracking = () => { if (requestRef.current) { cancelAnimationFrame(requestRef.current); requestRef.current = null; } };
   useEffect(() => { return () => stopTracking(); }, []);
 
-  return { isAiReady, startTracking, stopTracking, countdown, isStill };
+  return { isAiReady, startTracking, stopTracking, countdown, isStill, getInstantAdvice };
 }
