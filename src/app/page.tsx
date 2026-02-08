@@ -8,7 +8,7 @@ import DebugCamera from './components/DebugCamera';
 export default function Home() {
   // --- DEBUG SWITCH ---
   // Set this to TRUE to test the AI. Set to FALSE to see your Interface.
-  const DEBUG_MODE = true; 
+  const DEBUG_MODE = false; 
   // --------------------
 
   const [photos, setPhotos] = useState<string[]>([]);
