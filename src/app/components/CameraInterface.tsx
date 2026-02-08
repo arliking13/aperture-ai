@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, SwitchCamera, FlipHorizontal, Timer, TimerOff, Zap, ZapOff, Sparkles, Ratio, Square } from 'lucide-react';
+import { Camera, SwitchCamera, Timer, TimerOff, Zap, ZapOff, Square, Ratio, Lightbulb, LightbulbOff, Sparkles } from 'lucide-react';
 import { usePoseTracker } from '../hooks/usePoseTracker';
 import { takeSnapshot } from '../utils/cameraHelpers';
 
@@ -14,24 +14,23 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const zoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- STATE ---
   const [cameraStarted, setCameraStarted] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [format, setFormat] = useState<'vertical' | 'square' | 'album'>('vertical');
   const [isMirrored, setIsMirrored] = useState(true);
   const [flashActive, setFlashActive] = useState(false);
   
-  // --- SETTINGS ---
+  // Settings
   const [timerDuration, setTimerDuration] = useState<0 | 3 | 5 | 10>(0); 
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [zoomCap, setZoomCap] = useState({ min: 1, max: 10 });
   const [autoSessionActive, setAutoSessionActive] = useState(false);
   
-  // --- ADVICE STATE ---
+  // --- NEW: TIPS TOGGLE ---
+  const [tipsEnabled, setTipsEnabled] = useState(true); // Default ON
   const [currentAdvice, setCurrentAdvice] = useState<string | null>(null);
 
-  // --- AI HOOK ---
   const { isAiReady, startTracking, stopTracking, countdown: aiCountdown, isStill, getInstantAdvice } = usePoseTracker(
     videoRef as React.RefObject<HTMLVideoElement>,
     canvasRef as React.RefObject<HTMLCanvasElement>,
@@ -43,35 +42,30 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
 
   const performCapture = useCallback(async () => {
     if (!videoRef.current) return;
-    
     setFlashActive(true);
     setTimeout(() => setFlashActive(false), 150);
-
     const image = takeSnapshot(videoRef.current, format, isMirrored);
     if (image) onCapture(image);
 
-    // GET ADVICE AFTER PHOTO
-    // FIX: Only get advice if we have the capability, regardless of mode (user might want manual advice too)
-    if (getInstantAdvice) {
+    // ONLY GET ADVICE IF USER WANTS IT
+    if (tipsEnabled && getInstantAdvice) {
         const advice = await getInstantAdvice();
         if (advice) setCurrentAdvice(advice);
     }
-  }, [format, isMirrored, onCapture, getInstantAdvice]);
+  }, [format, isMirrored, onCapture, getInstantAdvice, tipsEnabled]);
 
   const [manualCountdown, setManualCountdown] = useState<number | null>(null);
 
   const handleShutterPress = () => {
     if (isProcessing) return;
     
-    // Auto Mode: Toggle Session
+    // Clear old advice when taking new photo
+    setCurrentAdvice(null);
+
     if (autoCaptureEnabled) {
-        const nextState = !autoSessionActive;
-        setAutoSessionActive(nextState);
-        if (!nextState) setCurrentAdvice(null); // Clear advice when stopping
+        setAutoSessionActive(!autoSessionActive);
         return;
     }
-
-    // Manual Mode
     if (timerDuration === 0) {
       performCapture();
       return;
@@ -168,7 +162,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: isMirrored ? 'scaleX(-1)' : 'none', pointerEvents: 'none' }}
         />
 
-        {/* COUNTDOWN OVERLAY */}
         {activeCountdown !== null && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
             <span style={{ fontSize: 140, fontWeight: 'bold', color: '#fff', textShadow: '0 5px 20px rgba(0,0,0,0.5)' }}>
@@ -177,20 +170,32 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
           </div>
         )}
 
-        {/* OVERLAY CONTROLS */}
+        {/* --- OVERLAY CONTROLS --- */}
         {cameraStarted && (
             <>
+                {/* Top Bar */}
                 <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.5), transparent)' }}>
+                    {/* Auto/Manual */}
                     <button onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
                         style={{...capsuleBtn, background: 'rgba(0,0,0,0.4)', border: autoCaptureEnabled ? '1px solid #00ff88' : '1px solid rgba(255,255,255,0.2)'}}>
                         {autoCaptureEnabled ? <Zap size={14} color="#00ff88"/> : <ZapOff size={14} color="#fff"/>}
                         <span style={{ color: autoCaptureEnabled ? '#00ff88' : '#fff' }}>{autoCaptureEnabled ? "AUTO" : "MANUAL"}</span>
                     </button>
-                    <button onClick={toggleTimer} style={iconBtn}>
-                        {timerDuration === 0 ? <TimerOff size={20} /> : <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:0, fontSize:10, fontWeight:'bold'}}><Timer size={16} />{timerDuration}s</div>}
-                    </button>
+                    
+                    {/* Right Side Icons */}
+                    <div style={{display:'flex', gap: 10}}>
+                        {/* TIPS TOGGLE (NEW) */}
+                        <button onClick={() => setTipsEnabled(!tipsEnabled)} style={iconBtn}>
+                             {tipsEnabled ? <Lightbulb size={20} color="#ffd700" /> : <LightbulbOff size={20} color="#aaa" />}
+                        </button>
+                        {/* TIMER */}
+                        <button onClick={toggleTimer} style={iconBtn}>
+                            {timerDuration === 0 ? <TimerOff size={20} /> : <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:0, fontSize:10, fontWeight:'bold'}}><Timer size={16} />{timerDuration}s</div>}
+                        </button>
+                    </div>
                 </div>
 
+                {/* Bottom Bar */}
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }}>
                     <div style={{ display: 'flex', gap: 15, marginBottom: 20 }}>
                         {[0.5, 1, 2].map(z => ( (z >= zoomCap.min && z <= zoomCap.max) && (
@@ -218,8 +223,9 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         )}
       </div>
 
-      {/* --- ADVICE BUBBLE (MOVED BELOW CAMERA) --- */}
-      {currentAdvice && cameraStarted && (
+      {/* --- ADVICE BUBBLE --- */}
+      {/* Show ONLY if tips enabled AND advice exists AND camera is running */}
+      {tipsEnabled && currentAdvice && cameraStarted && (
         <div style={{ 
             width: '100%',
             background: '#222', 
@@ -238,7 +244,7 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
         }}>
             <Sparkles size={20} color="#ffd700" style={{flexShrink:0, marginTop: 2}} />
             <div>
-                <span style={{display: 'block', fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1}}>AI Assistant</span>
+                <span style={{display: 'block', fontSize: 11, color: '#888', marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1}}>AI Photo Tip</span>
                 <span>{currentAdvice}</span>
             </div>
         </div>
@@ -248,7 +254,6 @@ export default function CameraInterface({ onCapture, isProcessing }: CameraInter
   );
 }
 
-// STYLES
 const iconBtn = { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', width: 40, height: 40 };
 const capsuleBtn = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', cursor: 'pointer', backdropFilter: 'blur(10px)' };
 const startBtn = { background: '#fff', color: '#000', border: 'none', padding: '15px 40px', borderRadius: 30, fontSize: 18, fontWeight: 'bold', cursor: 'pointer' };
