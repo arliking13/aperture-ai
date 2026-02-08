@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
-// --- CONFIGURATION ---
 const MOVEMENT_THRESHOLD = 0.005; 
-const FRAMES_TO_LOCK = 60; // Back to the ~2s lock you liked
+const FRAMES_TO_LOCK = 60; 
 
 const calculateMovement = (current: any[], previous: any[] | null): number => {
   if (!previous) return 999;
@@ -35,7 +34,6 @@ export function usePoseTracker(
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. Load AI
   useEffect(() => {
     async function loadAI() {
       try {
@@ -59,7 +57,6 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  // 2. Detection Loop
   const detectPose = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -116,7 +113,6 @@ export function usePoseTracker(
   const startCountdown = () => {
     let count = timerDuration;
     setCountdown(count);
-    
     if (countdownTimer.current) clearInterval(countdownTimer.current);
 
     countdownTimer.current = setInterval(() => {
@@ -152,8 +148,7 @@ export function usePoseTracker(
     setCountdown(null);
     stillFrames.current = 0;
 
-    // --- THE GHOST FIX ---
-    // Forces the canvas to wipe clean instantly
+    // --- THE FIX: Wipe the canvas instantly ---
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
