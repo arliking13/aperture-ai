@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PoseLandmarker, FilesetResolver, DrawingUtils } from '@mediapipe/tasks-vision';
 
 // --- CONFIGURATION ---
@@ -34,6 +34,9 @@ export function usePoseTracker(
   const previousLandmarks = useRef<any[] | null>(null);
   const stillFrames = useRef(0);
   const countdownTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // THE FIX: A "Kill Switch" flag to stop the loop instantly
+  const shouldTrack = useRef(false);
 
   useEffect(() => {
     async function loadAI() {
@@ -58,7 +61,10 @@ export function usePoseTracker(
     loadAI();
   }, []);
 
-  const detectPose = () => {
+  const detectPose = useCallback(() => {
+    // 1. KILL SWITCH: If tracking is off, STOP IMMEDIATELY.
+    if (!shouldTrack.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -92,16 +98,14 @@ export function usePoseTracker(
             }
         }
 
-        // Stats
         const percent = Math.round((stillFrames.current / FRAMES_TO_LOCK) * 100);
         setStability(percent);
 
-        // Trigger
         if (stillFrames.current >= FRAMES_TO_LOCK && !countdownTimer.current) {
            startCountdown();
         }
 
-        // Visuals
+        // Draw
         const color = percent > 50 ? '#00ff88' : 'rgba(255, 255, 255, 0.4)';
         const drawingUtils = new DrawingUtils(ctx);
         drawingUtils.drawLandmarks(landmarks, { radius: 3, color: color, fillColor: color });
@@ -110,13 +114,16 @@ export function usePoseTracker(
         previousLandmarks.current = landmarks;
       }
     }
-    requestRef.current = requestAnimationFrame(detectPose);
-  };
+    
+    // Loop only if allowed
+    if (shouldTrack.current) {
+      requestRef.current = requestAnimationFrame(detectPose);
+    }
+  }, [landmarker, timerDuration, onCaptureTrigger]); // Added dependencies
 
   const startCountdown = () => {
     let count = timerDuration;
     setCountdown(count);
-    
     if (countdownTimer.current) clearInterval(countdownTimer.current);
 
     countdownTimer.current = setInterval(() => {
@@ -133,32 +140,46 @@ export function usePoseTracker(
     }, 1000);
   };
 
-  const startTracking = () => {
-    if (!requestRef.current) detectPose();
-  };
+  const startTracking = useCallback(() => {
+    if (!shouldTrack.current) {
+      shouldTrack.current = true;
+      detectPose();
+    }
+  }, [detectPose]);
 
-  // --- FIX IS HERE ---
-  const stopTracking = () => {
-    // 1. Stop the animation loop
+  const stopTracking = useCallback(() => {
+    // 1. Flip the Kill Switch
+    shouldTrack.current = false;
+
+    // 2. Kill the loop
     if (requestRef.current) {
       cancelAnimationFrame(requestRef.current);
       requestRef.current = null;
     }
     
-    // 2. CLEAR THE CANVAS (Wipe the lines)
+    // 3. FORCE CLEAR THE CANVAS
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
+        // Clear multiple times to ensure it's gone
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        requestAnimationFrame(() => {
+             if (canvasRef.current) {
+                const ctx2 = canvasRef.current.getContext('2d');
+                ctx2?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+             }
+        });
       }
     }
     
-    // 3. Reset internal state
+    // 4. Reset State
     setStability(0);
     stillFrames.current = 0;
-  };
+    setCountdown(null);
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+  }, []);
 
-  useEffect(() => { return () => stopTracking(); }, []);
+  useEffect(() => { return () => stopTracking(); }, [stopTracking]);
 
   return { 
     isAiReady, 
